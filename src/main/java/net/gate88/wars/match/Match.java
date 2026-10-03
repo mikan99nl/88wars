@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +45,9 @@ public final class Match {
     private final List<MatchTeam> eliminationOrder = new ArrayList<>();
     private final BlockTracker blocks;
     private final BorderSpec border;
+
+    // 被攻撃履歴: Map<被攻撃者UUID, Map<攻撃者UUID, 攻撃時刻ミリ秒>>
+    private final Map<UUID, Map<UUID, Long>> recentDamagers = new HashMap<>();
 
     private State state = State.PREPARING;
     private int elapsed = 0;
@@ -157,7 +161,7 @@ public final class Match {
         mode.onStart(this);
         updateSidebars();
 
-        // ★ テレポート＆サイドバー初期化直後に、頭上ネームタグとタブリスト表示を全プレイヤーに確実に適用
+        // テレポート＆サイドバー初期化直後に、頭上ネームタグとタブリスト表示を全プレイヤーに確実に適用
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             for (MatchTeam t : teams) {
                 for (MatchPlayer mp : t.members) {
@@ -351,8 +355,12 @@ public final class Match {
         if (v == null || a == null || v == a) return;
         v.lastAttacker = a.uuid;
         v.lastAttackMillis = System.currentTimeMillis();
+
+        // 直近10秒のアシスト判定用に攻撃時刻を記録
+        recentDamagers.computeIfAbsent(v.uuid, k -> new HashMap<>()).put(a.uuid, System.currentTimeMillis());
     }
 
+    /** victim を脱落させる。killer が null なら直近の攻撃者を探す。 */
     public void eliminate(MatchPlayer victim, MatchPlayer killer, String cause) {
         if (isOver() || !victim.alive) return;
         if (killer == null && victim.lastAttacker != null
@@ -375,12 +383,42 @@ public final class Match {
             Player kp = killer.player();
             if (kp != null && !killer.left) {
                 kp.playSound(kp.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.2f);
-                Msg.actionBar(kp, "&a+ " + killPts + "pt &7(キル)");
 
-                String victimDisplayName = Colors.code(victim.team.color) + Colors.en(victim.team.color) + " &f" + victim.name;
-                Msg.title(kp, victimDisplayName, "&a+" + killPts + "pt &7(KILL)", 2, 25, 5);
+                // キラーの画面中央に小さく水色で [⚔] playername を表示
+                Msg.title(kp, "", "&b[⚔] " + victim.name, 0, 25, 5);
             }
 
+            // ★ アシストkill判定 & 表示
+            // 条件: 1. 直近10秒以内にダメージを与えている 2. キラーと同じチーム(味方)
+            Map<UUID, Long> damagers = recentDamagers.get(victim.uuid);
+            if (damagers != null) {
+                long now = System.currentTimeMillis();
+                for (Map.Entry<UUID, Long> entry : damagers.entrySet()) {
+                    UUID damagerUuid = entry.getKey();
+                    long attackTime = entry.getValue();
+
+                    // キラー本人、または10秒以上前は除外
+                    if (damagerUuid.equals(killer.uuid) || (now - attackTime > 10000)) {
+                        continue;
+                    }
+
+                    MatchPlayer assister = participant(damagerUuid);
+                    // 味方にkillされていること (assister.team == killer.team)
+                    if (assister != null && assister.team != null && killer.team != null
+                            && assister.team == killer.team) {
+                        Player ap = assister.player();
+                        if (ap != null && !assister.left) {
+                            // サブタイトル: [⚔] playername
+                            Msg.title(ap, "", "&b[⚔] " + victim.name, 0, 25, 5);
+                            // アクションバー: ⚔ ASSIST ON playername
+                            Msg.actionBar(ap, "&b⚔ ASSIST ON " + victim.name);
+                            ap.playSound(ap.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.4f);
+                        }
+                    }
+                }
+            }
+
+            // キル時の落雷演出
             if (vp != null && !victim.left) {
                 Location strikeLoc = vp.getLocation().clone();
                 if (strikeLoc.getY() < arena.cy) {
@@ -394,6 +432,9 @@ public final class Match {
         } else {
             broadcastToMatch(Colors.code(victim.team.color) + Colors.en(victim.team.color) + " &f" + victim.name + " &7は脱落した &8(" + cause + ")");
         }
+
+        // 被攻撃履歴をクリア
+        recentDamagers.remove(victim.uuid);
 
         if (vp != null && !victim.left) {
             Location l = vp.getLocation();
@@ -556,6 +597,7 @@ public final class Match {
         cleanWorldEntities();
         for (org.bukkit.entity.Entity e : tracked) if (e.isValid()) e.remove();
         tracked.clear();
+        recentDamagers.clear();
         mode.onEnd(this);
         if (!aborted && !podium.isEmpty()) plugin.podium().show(podium);
         for (MatchPlayer mp : players.values()) {
