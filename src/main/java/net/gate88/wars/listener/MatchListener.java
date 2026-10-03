@@ -48,7 +48,7 @@ public final class MatchListener implements Listener {
         }
     }
 
-    // チャットフォーマットの修正（MCID二重出力の完全防止）
+    // チャットフォーマット: 本文は必ず白に固定
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onChat(AsyncChatEvent e) {
         Player p = e.getPlayer();
@@ -57,27 +57,23 @@ public final class MatchListener implements Listener {
 
         e.renderer((source, sourceDisplayName, message, viewer) -> {
             if (mp != null && mp.team != null) {
-                NamedTextColor nameColor = Colors.textColor(mp.team.color);
-                String label = mp.team.label();
+                String colorName = Colors.en(mp.team.color);
+                NamedTextColor teamColor = Colors.textColor(mp.team.color);
 
-                Component prefix = Component.empty();
-
-                // ★ ここで判定: チーム名が自分の名前と同じでない場合のみ [チーム名] を前につける
-                if (!label.equalsIgnoreCase(source.getName())) {
-                    prefix = Msg.c(Colors.code(mp.team.color) + "[" + label + "] ");
-                }
-
-                // 結合: (チーム名がある場合のみ[チーム名]) + チーム色のMCID + : + メッセージ
-                return prefix
-                        .append(Component.text(source.getName(), nameColor))
-                        .append(Msg.c("&7: &f"))
-                        .append(message);
+                // COLOR (チーム色) + playername (白) + : (灰) + 本文 (白に明示固定)
+                return Component.text()
+                        .append(Component.text(colorName + " ", teamColor))
+                        .append(Component.text(source.getName(), NamedTextColor.WHITE))
+                        .append(Component.text(": ", NamedTextColor.GRAY))
+                        .append(message.color(NamedTextColor.WHITE))
+                        .build();
             } else {
-                // ロビー時: [Lobby] MCID: メッセージ
-                return Msg.c("&8[&7Lobby&8] ")
-                        .append(Component.text(source.getName(), NamedTextColor.GRAY))
-                        .append(Msg.c("&7: &f"))
-                        .append(message);
+                // ロビー時
+                return Component.text()
+                        .append(Component.text(source.getName(), NamedTextColor.WHITE))
+                        .append(Component.text(": ", NamedTextColor.GRAY))
+                        .append(message.color(NamedTextColor.WHITE))
+                        .build();
             }
         });
     }

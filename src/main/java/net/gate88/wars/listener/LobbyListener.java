@@ -6,8 +6,6 @@ import net.gate88.wars.gui.KitGui;
 import net.gate88.wars.gui.VoteMenu;
 import net.gate88.wars.match.Match;
 import net.gate88.wars.util.Colors;
-import net.kyori.adventure.text.format.NamedTextColor;
-import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -27,7 +25,6 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
-import org.bukkit.scoreboard.Team;
 
 /** ロビーの保護・参加/退出・ホットバー投票 */
 public final class LobbyListener implements Listener {
@@ -58,7 +55,8 @@ public final class LobbyListener implements Listener {
             // ロビー参加時にホットバー投票アイテムをセット
             VoteMenu.giveItems(plugin, p);
 
-            Colors.updateTabList(p, "&7", NamedTextColor.GRAY);
+            // ロビー時の表示にリセット
+            Colors.applyLobbyDisplay(p);
         });
     }
 
@@ -69,11 +67,7 @@ public final class LobbyListener implements Listener {
         if (m != null) m.onQuit(p);
         plugin.lobby().clearVote(p.getUniqueId());
         plugin.removeSidebar(p);
-
-        Team team = Bukkit.getScoreboardManager().getMainScoreboard().getEntryTeam(p.getName());
-        if (team != null) {
-            team.removeEntry(p.getName());
-        }
+        Colors.applyLobbyDisplay(p);
     }
 
     @EventHandler
@@ -96,7 +90,6 @@ public final class LobbyListener implements Listener {
         if (!inLobby(p)) return;
 
         int slot = p.getInventory().getHeldItemSlot();
-        // スロット 0〜6 または スロット 8 の場合は投票処理を実行
         if ((slot >= 0 && slot <= 6) || slot == VoteMenu.RANDOM_SLOT) {
             e.setCancelled(true);
             VoteMenu.handleClick(plugin, p, slot);

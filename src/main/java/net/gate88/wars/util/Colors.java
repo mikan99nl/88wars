@@ -1,6 +1,8 @@
 package net.gate88.wars.util;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
@@ -20,6 +22,28 @@ public final class Colors {
 
     public static Material wool(DyeColor c) {
         return Material.valueOf(c.name() + "_WOOL");
+    }
+
+    /** 英語表記カラーネーム (頭上ネームタグ・チャット・タブ用) */
+    public static String en(DyeColor c) {
+        return switch (c) {
+            case RED -> "RED";
+            case BLUE -> "BLUE";
+            case LIME -> "LIME";
+            case YELLOW -> "YELLOW";
+            case ORANGE -> "ORANGE";
+            case PURPLE -> "PURPLE";
+            case CYAN -> "CYAN";
+            case PINK -> "PINK";
+            case MAGENTA -> "MAGENTA";
+            case LIGHT_BLUE -> "AQUA";
+            case GREEN -> "GREEN";
+            case BROWN -> "BROWN";
+            case WHITE -> "WHITE";
+            case LIGHT_GRAY -> "SILVER";
+            case GRAY -> "GRAY";
+            case BLACK -> "BLACK";
+        };
     }
 
     public static String jp(DyeColor c) {
@@ -53,8 +77,7 @@ public final class Colors {
             case ORANGE -> "&6";
             case PURPLE -> "&5";
             case CYAN -> "&3";
-            case PINK -> "&d";
-            case MAGENTA -> "&d";
+            case PINK, MAGENTA -> "&d";
             case LIGHT_BLUE -> "&b";
             case GREEN -> "&2";
             case BROWN -> "&6";
@@ -72,13 +95,12 @@ public final class Colors {
             case BLUE -> NamedTextColor.BLUE;
             case LIME -> NamedTextColor.GREEN;
             case YELLOW -> NamedTextColor.YELLOW;
-            case ORANGE -> NamedTextColor.GOLD;
+            case ORANGE, BROWN -> NamedTextColor.GOLD;
             case PURPLE -> NamedTextColor.DARK_PURPLE;
             case CYAN -> NamedTextColor.DARK_AQUA;
             case PINK, MAGENTA -> NamedTextColor.LIGHT_PURPLE;
             case LIGHT_BLUE -> NamedTextColor.AQUA;
             case GREEN -> NamedTextColor.DARK_GREEN;
-            case BROWN -> NamedTextColor.GOLD;
             case WHITE -> NamedTextColor.WHITE;
             case LIGHT_GRAY -> NamedTextColor.GRAY;
             case GRAY -> NamedTextColor.DARK_GRAY;
@@ -95,8 +117,7 @@ public final class Colors {
             case ORANGE -> org.bukkit.Color.fromRGB(255, 170, 0);
             case PURPLE -> org.bukkit.Color.fromRGB(170, 0, 170);
             case CYAN -> org.bukkit.Color.fromRGB(0, 170, 170);
-            case PINK -> org.bukkit.Color.fromRGB(255, 85, 255);
-            case MAGENTA -> org.bukkit.Color.fromRGB(255, 85, 255);
+            case PINK, MAGENTA -> org.bukkit.Color.fromRGB(255, 85, 255);
             case LIGHT_BLUE -> org.bukkit.Color.fromRGB(85, 255, 255);
             case GREEN -> org.bukkit.Color.fromRGB(0, 170, 0);
             case BROWN -> org.bukkit.Color.fromRGB(170, 85, 0);
@@ -108,26 +129,64 @@ public final class Colors {
     }
 
     /**
-     * タブリスト表示と頭上ネームタグに色を適用する共通メソッド
+     * 試合中: 頭上ネームタグおよびタブリストに「COLOR playername」を適用する
+     * (例: 紫色で PURPLE + 白色で bubulz)
      */
-    public static void updateTabList(Player player, String prefixStr, NamedTextColor color) {
-        // 1. タブリストの表示名を設定
+    public static void applyPlayerDisplay(Player player, DyeColor dyeColor) {
+        String colorName = en(dyeColor);
+        NamedTextColor teamTextColor = textColor(dyeColor);
+
+        // 1. タブリスト (Tab): 「COLOR playername」
         Component tabName = Component.text()
-                .append(prefixStr != null && !prefixStr.isEmpty() ? Msg.c(prefixStr) : Component.empty())
-                .append(Component.text(player.getName(), color))
+                .append(Component.text(colorName + " ", teamTextColor))
+                .append(Component.text(player.getName(), NamedTextColor.WHITE))
                 .build();
         player.playerListName(tabName);
 
-        // 2. Scoreboard Team を利用してカラーを固定（頭上のネームタグも同期）
-        Scoreboard sb = Bukkit.getScoreboardManager().getMainScoreboard();
-        String teamName = "wars_" + color.toString().substring(0, Math.min(10, color.toString().length()));
-        Team team = sb.getTeam(teamName);
-        if (team == null) {
-            team = sb.registerNewTeam(teamName);
+        // 2. 頭上ネームタグ (Scoreboard Team):
+        // 各プレイヤーが見ているScoreboardすべてにTeamとPrefixを登録して確実に表示させる
+        String teamName = "w_" + colorName.toLowerCase();
+        if (teamName.length() > 16) teamName = teamName.substring(0, 16);
+        Component prefixComponent = Component.text(colorName + " ", teamTextColor);
+
+        Set<Scoreboard> scoreboards = new HashSet<>();
+        scoreboards.add(Bukkit.getScoreboardManager().getMainScoreboard());
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            scoreboards.add(online.getScoreboard());
         }
-        team.color(color);
-        if (!team.hasEntry(player.getName())) {
-            team.addEntry(player.getName());
+
+        for (Scoreboard sb : scoreboards) {
+            Team team = sb.getTeam(teamName);
+            if (team == null) {
+                team = sb.registerNewTeam(teamName);
+            }
+            team.prefix(prefixComponent);
+            team.suffix(Component.empty());
+            team.color(NamedTextColor.WHITE);
+
+            if (!team.hasEntry(player.getName())) {
+                team.addEntry(player.getName());
+            }
+        }
+    }
+
+    /**
+     * ロビー時: 頭上ネームタグおよびタブリストをリセット
+     */
+    public static void applyLobbyDisplay(Player player) {
+        player.playerListName(Component.text(player.getName(), NamedTextColor.WHITE));
+
+        Set<Scoreboard> scoreboards = new HashSet<>();
+        scoreboards.add(Bukkit.getScoreboardManager().getMainScoreboard());
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            scoreboards.add(online.getScoreboard());
+        }
+
+        for (Scoreboard sb : scoreboards) {
+            Team team = sb.getEntryTeam(player.getName());
+            if (team != null) {
+                team.removeEntry(player.getName());
+            }
         }
     }
 }

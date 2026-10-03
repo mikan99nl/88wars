@@ -18,7 +18,6 @@ import net.gate88.wars.util.Colors;
 import net.gate88.wars.util.Msg;
 import net.gate88.wars.util.Pos;
 import net.gate88.wars.util.Sidebar;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
 import org.bukkit.DyeColor;
@@ -152,27 +151,24 @@ public final class Match {
                 idx++;
                 Msg.title(p, "&e&l" + mode.displayName, "&7" + mode.graceSeconds() + "秒後に装備が配布されます", 5, 50, 10);
                 p.playSound(p.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 0.4f, 1.2f);
-                if (mode.teamMode()) {
-                    Msg.send(p, "あなたのチームカラー: " + Colors.code(t.color) + Colors.jp(t.color));
-                } else {
-                    Msg.send(p, "あなたの色: " + Colors.code(t.color) + Colors.jp(t.color));
-                }
-
-                // ★ TABリストの修正: チーム名がプレイヤー名と同じ（ソロ・1人時）はプレフィックスを付けない！
-                String tabPrefix = "";
-                if (!t.label().equalsIgnoreCase(p.getName())) {
-                    tabPrefix = Colors.code(t.color) + "[" + t.label() + "] ";
-                }
-
-                Colors.updateTabList(
-                        p,
-                        tabPrefix,
-                        Colors.textColor(t.color)
-                );
+                Msg.send(p, "あなたの色: " + Colors.code(t.color) + Colors.en(t.color));
             }
         }
         mode.onStart(this);
         updateSidebars();
+
+        // ★ テレポート＆サイドバー初期化直後に、頭上ネームタグとタブリスト表示を全プレイヤーに確実に適用
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            for (MatchTeam t : teams) {
+                for (MatchPlayer mp : t.members) {
+                    Player p = mp.player();
+                    if (p != null && p.isOnline()) {
+                        Colors.applyPlayerDisplay(p, t.color);
+                    }
+                }
+            }
+        });
+
         ticker = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 20L, 20L);
         if (border.enabled()) {
             long iv = Math.max(2, plugin.getConfig().getInt("border.interval-ticks", 4));
@@ -370,20 +366,35 @@ public final class Match {
         victim.team.eliminated = victim.team.aliveCount() == 0;
         if (victim.team.eliminated && !eliminationOrder.contains(victim.team)) eliminationOrder.add(victim.team);
 
+        Player vp = victim.player();
+
         if (killer != null) {
             killer.kills++;
-            killer.points += plugin.getConfig().getInt("points.kill", 30);
+            int killPts = plugin.getConfig().getInt("points.kill", 30);
+            killer.points += killPts;
             Player kp = killer.player();
             if (kp != null && !killer.left) {
                 kp.playSound(kp.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.2f);
-                Msg.actionBar(kp, "&a+ " + plugin.getConfig().getInt("points.kill", 30) + "pt &7(キル)");
+                Msg.actionBar(kp, "&a+ " + killPts + "pt &7(キル)");
+
+                String victimDisplayName = Colors.code(victim.team.color) + Colors.en(victim.team.color) + " &f" + victim.name;
+                Msg.title(kp, victimDisplayName, "&a+" + killPts + "pt &7(KILL)", 2, 25, 5);
             }
-            broadcastToMatch("&c" + victim.name + " &7は &e" + killer.name + " &7に倒された");
+
+            if (vp != null && !victim.left) {
+                Location strikeLoc = vp.getLocation().clone();
+                if (strikeLoc.getY() < arena.cy) {
+                    strikeLoc.setY(arena.cy + 1.0);
+                }
+                world.strikeLightningEffect(strikeLoc);
+            }
+
+            broadcastToMatch(Colors.code(victim.team.color) + Colors.en(victim.team.color) + " &f" + victim.name
+                    + " &7は " + Colors.code(killer.team.color) + Colors.en(killer.team.color) + " &f" + killer.name + " &7に倒された");
         } else {
-            broadcastToMatch("&c" + victim.name + " &7は脱落した &8(" + cause + ")");
+            broadcastToMatch(Colors.code(victim.team.color) + Colors.en(victim.team.color) + " &f" + victim.name + " &7は脱落した &8(" + cause + ")");
         }
 
-        Player vp = victim.player();
         if (vp != null && !victim.left) {
             Location l = vp.getLocation();
             world.spawnParticle(Particle.POOF, l.clone().add(0, 1, 0), 20, 0.3, 0.5, 0.3, 0.02);
@@ -552,7 +563,7 @@ public final class Match {
             if (p != null) {
                 p.setInvulnerable(false);
                 plugin.lobby().sendToLobby(p);
-                Colors.updateTabList(p, "&7", NamedTextColor.GRAY);
+                Colors.applyLobbyDisplay(p);
             }
         }
         plugin.matchClosed(this);
