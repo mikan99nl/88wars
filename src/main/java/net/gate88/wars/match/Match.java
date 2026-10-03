@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.arena.Arena;
+import net.gate88.wars.gui.VoteMenu;
 import net.gate88.wars.lobby.PodiumManager;
 import net.gate88.wars.mode.BorderSpec;
 import net.gate88.wars.mode.WarsMode;
@@ -356,7 +357,6 @@ public final class Match {
         v.lastAttacker = a.uuid;
         v.lastAttackMillis = System.currentTimeMillis();
 
-        // 直近10秒のアシスト判定用に攻撃時刻を記録
         recentDamagers.computeIfAbsent(v.uuid, k -> new HashMap<>()).put(a.uuid, System.currentTimeMillis());
     }
 
@@ -383,13 +383,9 @@ public final class Match {
             Player kp = killer.player();
             if (kp != null && !killer.left) {
                 kp.playSound(kp.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.2f);
-
-                // キラーの画面中央に小さく水色で [⚔] playername を表示
                 Msg.title(kp, "", "&b[⚔] " + victim.name, 0, 25, 5);
             }
 
-            // ★ アシストkill判定 & 表示
-            // 条件: 1. 直近10秒以内にダメージを与えている 2. キラーと同じチーム(味方)
             Map<UUID, Long> damagers = recentDamagers.get(victim.uuid);
             if (damagers != null) {
                 long now = System.currentTimeMillis();
@@ -397,20 +393,16 @@ public final class Match {
                     UUID damagerUuid = entry.getKey();
                     long attackTime = entry.getValue();
 
-                    // キラー本人、または10秒以上前は除外
                     if (damagerUuid.equals(killer.uuid) || (now - attackTime > 10000)) {
                         continue;
                     }
 
                     MatchPlayer assister = participant(damagerUuid);
-                    // 味方にkillされていること (assister.team == killer.team)
                     if (assister != null && assister.team != null && killer.team != null
                             && assister.team == killer.team) {
                         Player ap = assister.player();
                         if (ap != null && !assister.left) {
-                            // サブタイトル: [⚔] playername
                             Msg.title(ap, "", "&b[⚔] " + victim.name, 0, 25, 5);
-                            // アクションバー: ⚔ ASSIST ON playername
                             Msg.actionBar(ap, "&b⚔ ASSIST ON " + victim.name);
                             ap.playSound(ap.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.4f);
                         }
@@ -418,7 +410,6 @@ public final class Match {
                 }
             }
 
-            // キル時の落雷演出
             if (vp != null && !victim.left) {
                 Location strikeLoc = vp.getLocation().clone();
                 if (strikeLoc.getY() < arena.cy) {
@@ -433,7 +424,6 @@ public final class Match {
             broadcastToMatch(Colors.code(victim.team.color) + Colors.en(victim.team.color) + " &f" + victim.name + " &7は脱落した &8(" + cause + ")");
         }
 
-        // 被攻撃履歴をクリア
         recentDamagers.remove(victim.uuid);
 
         if (vp != null && !victim.left) {
@@ -605,7 +595,12 @@ public final class Match {
             if (p != null) {
                 p.setInvulnerable(false);
                 plugin.lobby().sendToLobby(p);
-                Colors.applyLobbyDisplay(p);
+
+                // ★ 試合終了でロビーに戻った際、旧式のネザースターを上書きし、ホットバー投票アイテムを確実に再配布
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    VoteMenu.giveItems(plugin, p);
+                    Colors.applyLobbyDisplay(p);
+                });
             }
         }
         plugin.matchClosed(this);

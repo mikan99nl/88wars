@@ -18,11 +18,9 @@ import net.gate88.wars.util.Sfx;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
-import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.scheduler.BukkitTask;
 
@@ -126,15 +124,10 @@ public final class LobbyManager {
         return it.getItemMeta().getPersistentDataContainer().has(itemKey, PersistentDataType.STRING);
     }
 
+    /** ネザースターを廃止し、ホットバー投票アイテムを一括配布 */
     public void giveItems(Player p) {
-        ItemStack star = new ItemStack(Material.NETHER_STAR);
-        ItemMeta meta = star.getItemMeta();
-        meta.displayName(Msg.c("&e&l投票メニュー &7(右クリック)"));
-        meta.lore(List.of(Msg.c("&7ゲームモードに1票入れる / ランダム抽選")));
-        meta.getPersistentDataContainer().set(itemKey, PersistentDataType.STRING, "vote");
-        star.setItemMeta(meta);
-        p.getInventory().setItem(4, star);
-        p.getInventory().setHeldItemSlot(4);
+        p.getInventory().clear();
+        VoteMenu.giveItems(plugin, p);
     }
 
     /** 参加時・試合後にロビーへ戻す */
@@ -214,7 +207,7 @@ public final class LobbyManager {
         if (countdown < 0) {
             countdown = Math.max(1, plugin.getConfig().getInt("lobby.countdown-seconds", 30));
             for (Player p : waiting) {
-                Msg.send(p, "&a" + countdown + "秒後に試合を開始します! &7(星で投票できます)");
+                Msg.send(p, "&a" + countdown + "秒後に試合を開始します! &7(ホットバーのアイテムで投票できます)");
                 Sfx.countdownStart(p);
             }
         }
