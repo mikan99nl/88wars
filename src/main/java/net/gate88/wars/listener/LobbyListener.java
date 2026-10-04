@@ -3,6 +3,7 @@ package net.gate88.wars.listener;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.gui.AdminGui;
 import net.gate88.wars.gui.KitGui;
+import net.gate88.wars.gui.KitPermGui;
 import net.gate88.wars.gui.VoteMenu;
 import net.gate88.wars.match.Match;
 import net.gate88.wars.util.Colors;
@@ -100,9 +101,8 @@ public final class LobbyListener implements Listener {
         boolean nowIn = plugin.kits().isInKitArea(e.getTo());
 
         if (!wasIn && nowIn) {
-            // ★ エリアに入った時: 投票アイテムを消去
             p.getInventory().clear();
-            // ★ 自動クリエイティブ専用権限 (creative) を持っている場合のみクリエイティブにする
+            // ★ OPまたはcreative権限を持っているプレイヤーのみクリエイティブ化
             if (plugin.kits().canAutoCreative(p)) {
                 p.setGameMode(GameMode.CREATIVE);
             }
@@ -112,7 +112,7 @@ public final class LobbyListener implements Listener {
             }
             p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.5f);
         } else if (wasIn && !nowIn) {
-            // ★ エリアから出た時: 必ずアドベンチャーモードに上書きし、インベントリクリア＆投票アイテム付与
+            // ★ エリアから出た時は必ずアドベンチャーに戻し、投票アイテムを付与
             plugin.getServer().getScheduler().runTask(plugin, () -> {
                 if (!p.isOnline() || !inLobby(p)) return;
                 p.getInventory().clear();
@@ -184,6 +184,15 @@ public final class LobbyListener implements Listener {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         var holder = e.getView().getTopInventory().getHolder();
 
+        // KitPermGui の処理 (OP限定)
+        if (holder instanceof KitPermGui kpg) {
+            e.setCancelled(true);
+            if (e.getClickedInventory() == e.getView().getTopInventory()) {
+                kpg.click(p, e.getSlot(), e.getClick());
+            }
+            return;
+        }
+
         if (holder instanceof KitGui kg) {
             e.setCancelled(true);
             if (e.getClickedInventory() == e.getView().getTopInventory()) {
@@ -205,6 +214,6 @@ public final class LobbyListener implements Listener {
     @EventHandler
     public void onDrag(InventoryDragEvent e) {
         var holder = e.getView().getTopInventory().getHolder();
-        if (holder instanceof AdminGui || holder instanceof KitGui) e.setCancelled(true);
+        if (holder instanceof AdminGui || holder instanceof KitGui || holder instanceof KitPermGui) e.setCancelled(true);
     }
 }

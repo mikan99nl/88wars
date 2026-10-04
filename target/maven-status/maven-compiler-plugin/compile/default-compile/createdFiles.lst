@@ -24,6 +24,7 @@ net\gate88\wars\util\Pos.class
 net\gate88\wars\arena\ArenaManager.class
 net\gate88\wars\listener\LobbyListener.class
 net\gate88\wars\points\PointsManager$Entry.class
+net\gate88\wars\gui\KitPermGui$Mode.class
 net\gate88\wars\gui\KitGui$Mode.class
 net\gate88\wars\arena\Arena.class
 net\gate88\wars\util\Sfx.class
@@ -32,6 +33,7 @@ net\gate88\wars\gui\KitGui.class
 net\gate88\wars\arena\ArenaBuilder.class
 net\gate88\wars\gui\AdminGui$Toggle.class
 net\gate88\wars\gui\AdminGui$Page.class
+net\gate88\wars\gui\KitPermGui.class
 net\gate88\wars\gui\AdminGui.class
 net\gate88\wars\points\PointsManager.class
 net\gate88\wars\arena\MapStore.class

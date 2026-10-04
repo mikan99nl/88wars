@@ -3,8 +3,8 @@ package net.gate88.wars.kit;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,7 +15,6 @@ import net.gate88.wars.WarsPlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.enchantments.Enchantment;
@@ -36,9 +35,9 @@ public final class KitManager {
     private int maxX, maxY, maxZ;
     private boolean hasArea = false;
 
-    // 権限セット (UUID文字列)
-    private final Set<String> createPerms = new HashSet<>();
-    private final Set<String> creativePerms = new HashSet<>();
+    // 権限保持者マップ: Map<UUID, プレイヤー名> (オフライン対応)
+    private final Map<UUID, String> createPerms = new HashMap<>();
+    private final Map<UUID, String> creativePerms = new HashMap<>();
 
     public KitManager(WarsPlugin plugin) {
         this.plugin = plugin;
@@ -64,8 +63,6 @@ public final class KitManager {
 
         loadArea();
         loadPermissions();
-
-        // ★ サーバー起動時・リロード時に重複しているKitを自動削除
         removeDuplicateKits();
     }
 
@@ -79,6 +76,95 @@ public final class KitManager {
 
     public void reload() {
         load();
+    }
+
+    // ------------------------------------------------ 権限管理 (create / creative / オフライン対応)
+    private void loadPermissions() {
+        createPerms.clear();
+        creativePerms.clear();
+
+        ConfigurationSection crSec = config.getConfigurationSection("permissions.create");
+        if (crSec != null) {
+            for (String key : crSec.getKeys(false)) {
+                try {
+                    UUID u = UUID.fromString(key);
+                    createPerms.put(u, crSec.getString(key, "不明"));
+                } catch (IllegalArgumentException ignored) {}
+            }
+        }
+
+        ConfigurationSection cvSec = config.getConfigurationSection("permissions.creative");
+        if (cvSec != null) {
+            for (String key : cvSec.getKeys(false)) {
+                try {
+                    UUID u = UUID.fromString(key);
+                    creativePerms.put(u, cvSec.getString(key, "不明"));
+                } catch (IllegalArgumentException ignored) {}
+            }
+        }
+    }
+
+    private void savePermissions() {
+        config.set("permissions", null);
+        for (Map.Entry<UUID, String> e : createPerms.entrySet()) {
+            config.set("permissions.create." + e.getKey().toString(), e.getValue());
+        }
+        for (Map.Entry<UUID, String> e : creativePerms.entrySet()) {
+            config.set("permissions.creative." + e.getKey().toString(), e.getValue());
+        }
+        save();
+    }
+
+    /** キットの追加 (/createkit) が可能か */
+    public boolean canCreateKit(Player p) {
+        return p.isOp()
+                || p.hasPermission("wars.admin")
+                || p.hasPermission("kit.create")
+                || createPerms.containsKey(p.getUniqueId());
+    }
+
+    /** ★ Kit制作エリアに入った際、自動でクリエイティブモードになるか (OPは常にtrue) */
+    public boolean canAutoCreative(Player p) {
+        return p.isOp()
+                || p.hasPermission("wars.admin")
+                || p.hasPermission("kit.creative")
+                || creativePerms.containsKey(p.getUniqueId());
+    }
+
+    public boolean hasCreatePerm(UUID uuid) {
+        return createPerms.containsKey(uuid);
+    }
+
+    public boolean hasCreativePerm(UUID uuid) {
+        return creativePerms.containsKey(uuid);
+    }
+
+    public void setCreatePerm(UUID uuid, String name, boolean allow) {
+        if (allow) createPerms.put(uuid, name != null ? name : "不明");
+        else createPerms.remove(uuid);
+        savePermissions();
+    }
+
+    public void setCreativePerm(UUID uuid, String name, boolean allow) {
+        if (allow) creativePerms.put(uuid, name != null ? name : "不明");
+        else creativePerms.remove(uuid);
+        savePermissions();
+    }
+
+    /** 特定プレイヤーの全権限を完全削除 */
+    public void removeAllPerms(UUID uuid) {
+        createPerms.remove(uuid);
+        creativePerms.remove(uuid);
+        savePermissions();
+    }
+
+    /** 権限を持っているすべてのプレイヤー (UUID -> 名前) のマップを取得 (オフライン含む) */
+    public Map<UUID, String> getAllPermHolders() {
+        Map<UUID, String> map = new HashMap<>(createPerms);
+        for (Map.Entry<UUID, String> e : creativePerms.entrySet()) {
+            map.putIfAbsent(e.getKey(), e.getValue());
+        }
+        return map;
     }
 
     // ------------------------------------------------ 重複Kitの自動削除
@@ -109,7 +195,6 @@ public final class KitManager {
         }
     }
 
-    /** キットの装備・アイテム・ポーション内容から一意のシグネチャを生成 */
     private String buildKitSignature(String path) {
         StringBuilder sb = new StringBuilder();
         for (String armor : List.of("helmet", "chestplate", "leggings", "boots")) {
@@ -143,68 +228,6 @@ public final class KitManager {
     private String itemSig(ItemStack it) {
         if (it == null || it.getType().isAir()) return "AIR";
         return it.getType().name() + "x" + it.getAmount() + ":" + Objects.hashCode(it.getEnchantments());
-    }
-
-    // ------------------------------------------------ 権限管理 (create / creative)
-    private void loadPermissions() {
-        createPerms.clear();
-        creativePerms.clear();
-        createPerms.addAll(config.getStringList("permissions.create"));
-        creativePerms.addAll(config.getStringList("permissions.creative"));
-    }
-
-    private void savePermissions() {
-        config.set("permissions.create", new ArrayList<>(createPerms));
-        config.set("permissions.creative", new ArrayList<>(creativePerms));
-        save();
-    }
-
-    /** キットの追加 (/createkit) が可能か */
-    public boolean canCreateKit(Player p) {
-        return p.isOp()
-                || p.hasPermission("wars.admin")
-                || p.hasPermission("kit.create")
-                || createPerms.contains(p.getUniqueId().toString());
-    }
-
-    /** Kit制作エリアに入った際、自動でクリエイティブモードになるか */
-    public boolean canAutoCreative(Player p) {
-        return p.hasPermission("kit.creative")
-                || creativePerms.contains(p.getUniqueId().toString());
-    }
-
-    public void setCreatePerm(UUID uuid, boolean allow) {
-        if (allow) createPerms.add(uuid.toString());
-        else createPerms.remove(uuid.toString());
-        savePermissions();
-    }
-
-    public void setCreativePerm(UUID uuid, boolean allow) {
-        if (allow) creativePerms.add(uuid.toString());
-        else creativePerms.remove(uuid.toString());
-        savePermissions();
-    }
-
-    public List<String> getCreatePermPlayerNames() {
-        List<String> names = new ArrayList<>();
-        for (String s : createPerms) {
-            try {
-                OfflinePlayer op = Bukkit.getOfflinePlayer(UUID.fromString(s));
-                names.add(op.getName() != null ? op.getName() : s);
-            } catch (IllegalArgumentException ignored) {}
-        }
-        return names;
-    }
-
-    public List<String> getCreativePermPlayerNames() {
-        List<String> names = new ArrayList<>();
-        for (String s : creativePerms) {
-            try {
-                OfflinePlayer op = Bukkit.getOfflinePlayer(UUID.fromString(s));
-                names.add(op.getName() != null ? op.getName() : s);
-            } catch (IllegalArgumentException ignored) {}
-        }
-        return names;
     }
 
     // ------------------------------------------------ Kit制作エリア管理
@@ -338,7 +361,6 @@ public final class KitManager {
         String path = "kits." + kitName.toLowerCase();
 
         config.set(path + ".name", kitName);
-        // ★ 誰が追加したかを記録
         config.set(path + ".creator", player.getName());
         if (!config.contains(path + ".enabled")) {
             config.set(path + ".enabled", true);
@@ -446,7 +468,6 @@ public final class KitManager {
         return name != null ? name : kitId;
     }
 
-    /** 誰がこのKitを作成したかを取得 */
     public String getKitCreator(String kitId) {
         return config.getString("kits." + kitId.toLowerCase() + ".creator", "不明");
     }
