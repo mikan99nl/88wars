@@ -14,12 +14,17 @@ commands:
     permission: wars.admin
   createkit:
     description: Create and save a kit from player inventory
-    permission: kit.admin
+  kit:
+    description: Kit management GUI and settings
+    permission: wars.admin
+
 permissions:
   wars.admin:
     description: 88WARS administration
     default: op
-  kit.admin:
-    description: Kit administration permission
-    default: op
-
+  kit.create:
+    description: Allow only creating new kits
+    default: false
+  kit.creative:
+    description: Auto creative mode in kit area
+    default: false

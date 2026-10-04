@@ -100,25 +100,31 @@ public final class LobbyListener implements Listener {
         boolean nowIn = plugin.kits().isInKitArea(e.getTo());
 
         if (!wasIn && nowIn) {
-            // ★ エリアに入った時: 投票アイテムを消去し、Kit制作を可能にする
+            // ★ エリアに入った時: 投票アイテムを消去
             p.getInventory().clear();
-            if (p.hasPermission("wars.admin")) {
+            // ★ 自動クリエイティブ専用権限 (creative) を持っている場合のみクリエイティブにする
+            if (plugin.kits().canAutoCreative(p)) {
                 p.setGameMode(GameMode.CREATIVE);
             }
             Msg.send(p, "&a[Kit制作エリア] &fエリアに入りました。投票アイテムを消去しました。");
-            Msg.send(p, "&7装備を整えたら &e/createkit <キット名> &7で保存できます！");
+            if (plugin.kits().canCreateKit(p)) {
+                Msg.send(p, "&7装備を整えたら &e/createkit <キット名> &7で追加できます！");
+            }
             p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.5f);
         } else if (wasIn && !nowIn) {
-            // ★ エリアから出た時: 持ち出し防止のため全消去し、投票アイテムを付与
-            p.getInventory().clear();
-            p.setGameMode(GameMode.ADVENTURE);
-            VoteMenu.giveItems(plugin, p);
-            Msg.send(p, "&e[Kit制作エリア] &fエリアから出ました。インベントリをクリアし投票アイテムを付与しました。");
-            p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 1.0f);
+            // ★ エリアから出た時: 必ずアドベンチャーモードに上書きし、インベントリクリア＆投票アイテム付与
+            plugin.getServer().getScheduler().runTask(plugin, () -> {
+                if (!p.isOnline() || !inLobby(p)) return;
+                p.getInventory().clear();
+                p.setGameMode(GameMode.ADVENTURE);
+                VoteMenu.giveItems(plugin, p);
+                p.updateInventory();
+                Msg.send(p, "&e[Kit制作エリア] &fエリアから出ました。アドベンチャーモードに戻し、投票アイテムを付与しました。");
+                p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 1.0f);
+            });
         }
     }
 
-    /** ホットバーのアイテムを右クリックして直接投票 */
     @EventHandler
     public void onInteract(PlayerInteractEvent e) {
         if (e.getHand() != EquipmentSlot.HAND) return;
@@ -126,7 +132,6 @@ public final class LobbyListener implements Listener {
         Player p = e.getPlayer();
         if (!inLobby(p)) return;
 
-        // Kit制作エリア内では投票処理を行わない
         if (plugin.kits().isInKitArea(p.getLocation())) return;
 
         int slot = p.getInventory().getHeldItemSlot();
@@ -194,7 +199,6 @@ public final class LobbyListener implements Listener {
             return;
         }
 
-        // Kit制作エリア内ではインベントリ操作を自由に行える
         if (inLobby(p) && !bypass(p)) e.setCancelled(true);
     }
 

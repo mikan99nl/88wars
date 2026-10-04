@@ -3,12 +3,19 @@ package net.gate88.wars.kit;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import net.gate88.wars.WarsPlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.enchantments.Enchantment;
@@ -28,6 +35,10 @@ public final class KitManager {
     private int minX, minY, minZ;
     private int maxX, maxY, maxZ;
     private boolean hasArea = false;
+
+    // 権限セット (UUID文字列)
+    private final Set<String> createPerms = new HashSet<>();
+    private final Set<String> creativePerms = new HashSet<>();
 
     public KitManager(WarsPlugin plugin) {
         this.plugin = plugin;
@@ -52,6 +63,10 @@ public final class KitManager {
         }
 
         loadArea();
+        loadPermissions();
+
+        // ★ サーバー起動時・リロード時に重複しているKitを自動削除
+        removeDuplicateKits();
     }
 
     public void save() {
@@ -64,6 +79,132 @@ public final class KitManager {
 
     public void reload() {
         load();
+    }
+
+    // ------------------------------------------------ 重複Kitの自動削除
+    private void removeDuplicateKits() {
+        ConfigurationSection kitsSec = config.getConfigurationSection("kits");
+        if (kitsSec == null) return;
+
+        Set<String> seenNames = new HashSet<>();
+        Set<String> seenSignatures = new HashSet<>();
+        List<String> toRemove = new ArrayList<>();
+
+        for (String id : new ArrayList<>(kitsSec.getKeys(false))) {
+            String path = "kits." + id;
+            String dispName = config.getString(path + ".name", id).trim().toLowerCase();
+            String signature = buildKitSignature(path);
+
+            if (!seenNames.add(dispName) || !seenSignatures.add(signature)) {
+                toRemove.add(id);
+            }
+        }
+
+        if (!toRemove.isEmpty()) {
+            for (String id : toRemove) {
+                config.set("kits." + id, null);
+                plugin.getLogger().info("[KitManager] 重複しているキットを自動削除しました: " + id);
+            }
+            save();
+        }
+    }
+
+    /** キットの装備・アイテム・ポーション内容から一意のシグネチャを生成 */
+    private String buildKitSignature(String path) {
+        StringBuilder sb = new StringBuilder();
+        for (String armor : List.of("helmet", "chestplate", "leggings", "boots")) {
+            ItemStack it = config.getItemStack(path + ".armor." + armor);
+            sb.append(armor).append("=").append(itemSig(it)).append(";");
+        }
+        sb.append("offhand=").append(itemSig(config.getItemStack(path + ".offhand"))).append(";");
+
+        ConfigurationSection slots = config.getConfigurationSection(path + ".slots");
+        if (slots != null) {
+            for (String key : slots.getKeys(false)) {
+                sb.append("s").append(key).append("=").append(itemSig(slots.getItemStack(key))).append(";");
+            }
+        }
+
+        ConfigurationSection effs = config.getConfigurationSection(path + ".effects");
+        if (effs != null) {
+            for (String key : effs.getKeys(false)) {
+                if (effs.isConfigurationSection(key)) {
+                    sb.append("e").append(key).append("=")
+                            .append(effs.getInt(key + ".level")).append(":")
+                            .append(effs.getInt(key + ".duration")).append(";");
+                } else {
+                    sb.append("e").append(key).append("=").append(effs.getInt(key)).append(";");
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private String itemSig(ItemStack it) {
+        if (it == null || it.getType().isAir()) return "AIR";
+        return it.getType().name() + "x" + it.getAmount() + ":" + Objects.hashCode(it.getEnchantments());
+    }
+
+    // ------------------------------------------------ 権限管理 (create / creative)
+    private void loadPermissions() {
+        createPerms.clear();
+        creativePerms.clear();
+        createPerms.addAll(config.getStringList("permissions.create"));
+        creativePerms.addAll(config.getStringList("permissions.creative"));
+    }
+
+    private void savePermissions() {
+        config.set("permissions.create", new ArrayList<>(createPerms));
+        config.set("permissions.creative", new ArrayList<>(creativePerms));
+        save();
+    }
+
+    /** キットの追加 (/createkit) が可能か */
+    public boolean canCreateKit(Player p) {
+        return p.isOp()
+                || p.hasPermission("wars.admin")
+                || p.hasPermission("kit.create")
+                || createPerms.contains(p.getUniqueId().toString());
+    }
+
+    /** Kit制作エリアに入った際、自動でクリエイティブモードになるか */
+    public boolean canAutoCreative(Player p) {
+        return p.hasPermission("kit.creative")
+                || creativePerms.contains(p.getUniqueId().toString());
+    }
+
+    public void setCreatePerm(UUID uuid, boolean allow) {
+        if (allow) createPerms.add(uuid.toString());
+        else createPerms.remove(uuid.toString());
+        savePermissions();
+    }
+
+    public void setCreativePerm(UUID uuid, boolean allow) {
+        if (allow) creativePerms.add(uuid.toString());
+        else creativePerms.remove(uuid.toString());
+        savePermissions();
+    }
+
+    public List<String> getCreatePermPlayerNames() {
+        List<String> names = new ArrayList<>();
+        for (String s : createPerms) {
+            try {
+                OfflinePlayer op = Bukkit.getOfflinePlayer(UUID.fromString(s));
+                names.add(op.getName() != null ? op.getName() : s);
+            } catch (IllegalArgumentException ignored) {}
+        }
+        return names;
+    }
+
+    public List<String> getCreativePermPlayerNames() {
+        List<String> names = new ArrayList<>();
+        for (String s : creativePerms) {
+            try {
+                OfflinePlayer op = Bukkit.getOfflinePlayer(UUID.fromString(s));
+                names.add(op.getName() != null ? op.getName() : s);
+            } catch (IllegalArgumentException ignored) {}
+        }
+        return names;
     }
 
     // ------------------------------------------------ Kit制作エリア管理
@@ -175,6 +316,7 @@ public final class KitManager {
     private void saveDefaultKit(String id, String displayName, Material h, Material c, Material l, Material b, ItemStack offhand, List<ItemStack> items) {
         String path = "kits." + id.toLowerCase();
         config.set(path + ".name", displayName);
+        config.set(path + ".creator", "System (Default)");
         config.set(path + ".enabled", true);
         config.set(path + ".armor.helmet", h != null ? new ItemStack(h) : null);
         config.set(path + ".armor.chestplate", c != null ? new ItemStack(c) : null);
@@ -187,11 +329,17 @@ public final class KitManager {
         }
     }
 
+    public boolean exists(String kitName) {
+        return config.contains("kits." + kitName.toLowerCase());
+    }
+
     public void createKit(Player player, String kitName) {
         PlayerInventory inv = player.getInventory();
         String path = "kits." + kitName.toLowerCase();
 
         config.set(path + ".name", kitName);
+        // ★ 誰が追加したかを記録
+        config.set(path + ".creator", player.getName());
         if (!config.contains(path + ".enabled")) {
             config.set(path + ".enabled", true);
         }
@@ -213,7 +361,6 @@ public final class KitManager {
         save();
     }
 
-    /** プレイヤーにキットを適用（ポーション効果も付与） */
     public void applyKit(Player player, String kitId) {
         String path = "kits." + (kitId != null ? kitId.toLowerCase() : "");
         if (!config.contains(path)) {
@@ -247,7 +394,6 @@ public final class KitManager {
             }
         }
 
-        // ★ 設定されたポーション効果をプレイヤーに付与（試合中持続: 600秒）
         List<PotionEffect> effects = getKitEffects(kitId);
         for (PotionEffect effect : effects) {
             player.addPotionEffect(effect);
@@ -300,6 +446,11 @@ public final class KitManager {
         return name != null ? name : kitId;
     }
 
+    /** 誰がこのKitを作成したかを取得 */
+    public String getKitCreator(String kitId) {
+        return config.getString("kits." + kitId.toLowerCase() + ".creator", "不明");
+    }
+
     public List<String> getKitNames() {
         ConfigurationSection sec = config.getConfigurationSection("kits");
         if (sec == null) return List.of();
@@ -337,8 +488,28 @@ public final class KitManager {
         return new ItemStack(Material.CHEST);
     }
 
-    // ------------------------------------------------ ポーション効果の管理
-    /** Kitに設定されているポーション効果一覧を取得 */
+    // ------------------------------------------------ ポーション効果＆時間の管理
+    public int getDefaultVanillaDuration(PotionEffectType type, int level) {
+        if (level >= 2) {
+            if (type == PotionEffectType.REGENERATION) return 22;
+            if (type == PotionEffectType.SLOW_FALLING) return 90;
+            if (type == PotionEffectType.GLOWING) return 10;
+            return 90;
+        }
+
+        if (type == PotionEffectType.SPEED || type == PotionEffectType.STRENGTH
+                || type == PotionEffectType.JUMP_BOOST || type == PotionEffectType.RESISTANCE
+                || type == PotionEffectType.HASTE || type == PotionEffectType.FIRE_RESISTANCE
+                || type == PotionEffectType.NIGHT_VISION || type == PotionEffectType.INVISIBILITY) {
+            return 480;
+        }
+        if (type == PotionEffectType.SLOW_FALLING) return 240;
+        if (type == PotionEffectType.REGENERATION) return 90;
+        if (type == PotionEffectType.ABSORPTION) return 120;
+        if (type == PotionEffectType.GLOWING) return 30;
+        return 480;
+    }
+
     public List<PotionEffect> getKitEffects(String kitId) {
         List<PotionEffect> list = new ArrayList<>();
         String path = "kits." + kitId.toLowerCase() + ".effects";
@@ -348,28 +519,51 @@ public final class KitManager {
         for (String key : sec.getKeys(false)) {
             PotionEffectType type = PotionEffectType.getByName(key.toUpperCase());
             if (type != null) {
-                int level = sec.getInt(key); // 1 = Lv1 (amp 0), 2 = Lv2 (amp 1)
-                if (level > 0) {
-                    list.add(new PotionEffect(type, 20 * 600, level - 1)); // 10分間 (試合中持続)
+                int level;
+                int durationSec;
+
+                if (sec.isConfigurationSection(key)) {
+                    level = sec.getInt(key + ".level", 0);
+                    durationSec = sec.getInt(key + ".duration", getDefaultVanillaDuration(type, level));
+                } else {
+                    level = sec.getInt(key, 0);
+                    durationSec = getDefaultVanillaDuration(type, level);
+                }
+
+                if (level > 0 && durationSec > 0) {
+                    list.add(new PotionEffect(type, durationSec * 20, level - 1));
                 }
             }
         }
         return list;
     }
 
-    /** Kitの特定ポーション効果のレベルを取得 (0 = なし, 1 = Lv1, 2 = Lv2) */
     public int getEffectLevel(String kitId, PotionEffectType type) {
         String path = "kits." + kitId.toLowerCase() + ".effects." + type.getName().toLowerCase();
+        if (config.isConfigurationSection(path)) {
+            return config.getInt(path + ".level", 0);
+        }
         return config.getInt(path, 0);
     }
 
-    /** ポーション効果のレベルを設定 (0 = 解除, 1 = Lv1, 2 = Lv2) */
-    public void setEffectLevel(String kitId, PotionEffectType type, int level) {
+    public int getEffectDuration(String kitId, PotionEffectType type) {
+        String path = "kits." + kitId.toLowerCase() + ".effects." + type.getName().toLowerCase();
+        int level = getEffectLevel(kitId, type);
+        int defaultSec = getDefaultVanillaDuration(type, Math.max(1, level));
+
+        if (config.isConfigurationSection(path)) {
+            return config.getInt(path + ".duration", defaultSec);
+        }
+        return defaultSec;
+    }
+
+    public void setEffect(String kitId, PotionEffectType type, int level, int durationSeconds) {
         String path = "kits." + kitId.toLowerCase() + ".effects." + type.getName().toLowerCase();
         if (level <= 0) {
             config.set(path, null);
         } else {
-            config.set(path, level);
+            config.set(path + ".level", level);
+            config.set(path + ".duration", Math.max(5, durationSeconds));
         }
         save();
     }

@@ -3,19 +3,19 @@ package net.gate88.wars;
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import net.gate88.wars.arena.ArenaManager;
 import net.gate88.wars.arena.MapStore;
 import net.gate88.wars.command.WarsCommand;
 import net.gate88.wars.kit.KitManager;
+import net.gate88.wars.listener.LobbyListener;
+import net.gate88.wars.listener.MatchListener;
 import net.gate88.wars.lobby.HologramManager;
 import net.gate88.wars.lobby.LobbyManager;
 import net.gate88.wars.lobby.PodiumManager;
-import net.gate88.wars.listener.LobbyListener;
-import net.gate88.wars.listener.MatchListener;
 import net.gate88.wars.match.Match;
 import net.gate88.wars.mode.ModeRegistry;
 import net.gate88.wars.points.PointsManager;
@@ -63,6 +63,7 @@ public final class WarsPlugin extends JavaPlugin {
 
         Bukkit.getPluginManager().registerEvents(new LobbyListener(this), this);
         Bukkit.getPluginManager().registerEvents(new MatchListener(this), this);
+
         WarsCommand cmd = new WarsCommand(this);
         getCommand("wars").setExecutor(cmd);
         getCommand("wars").setTabCompleter(cmd);
@@ -73,6 +74,11 @@ public final class WarsPlugin extends JavaPlugin {
         if (getCommand("createkit") != null) {
             getCommand("createkit").setExecutor(cmd);
             getCommand("createkit").setTabCompleter(cmd);
+        }
+        // ★ /kit コマンドを登録
+        if (getCommand("kit") != null) {
+            getCommand("kit").setExecutor(cmd);
+            getCommand("kit").setTabCompleter(cmd);
         }
 
         lobby.start();

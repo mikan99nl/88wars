@@ -1,6 +1,7 @@
 package net.gate88.wars.command;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +19,7 @@ import net.gate88.wars.util.Msg;
 import net.gate88.wars.util.Sfx;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -26,7 +28,6 @@ import org.bukkit.entity.Player;
 
 public final class WarsCommand implements CommandExecutor, TabCompleter {
     private final WarsPlugin plugin;
-    // エリア設定用の一時座標保持 Map<プレイヤーUUID, Map<1or2, Location>>
     private final Map<UUID, Map<Integer, Location>> tempAreaPos = new HashMap<>();
 
     public WarsCommand(WarsPlugin plugin) {
@@ -40,6 +41,21 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
     @Override
     public boolean onCommand(CommandSender s, Command cmd, String label, String[] a) {
         String cmdName = cmd.getName().toLowerCase();
+
+        // /kit コマンド
+        if (cmdName.equals("kit")) {
+            if (!s.hasPermission("wars.admin") && !s.isOp()) {
+                Msg.send(s, "&c権限がありません");
+                return true;
+            }
+            if (!(s instanceof Player p)) {
+                Msg.send(s, "ゲーム内で実行してください");
+                return true;
+            }
+            handleKitCommand(p, a);
+            return true;
+        }
+
         if (cmdName.equals("88start")) {
             if (!s.hasPermission("wars.admin")) {
                 Msg.send(s, "&c権限がありません");
@@ -57,13 +73,15 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             else Msg.send(s, "&a開始します");
             return true;
         }
+
+        // ★ /createkit コマンド（追加権限保持者も実行可能・上書きは管理者のみ）
         if (cmdName.equals("createkit")) {
-            if (!s.hasPermission("kit.admin") && !s.isOp()) {
-                Msg.send(s, "&c権限がありません (kit.admin または OP が必要です)");
-                return true;
-            }
             if (!(s instanceof Player p)) {
                 Msg.send(s, "ゲーム内で実行してください");
+                return true;
+            }
+            if (!plugin.kits().canCreateKit(p)) {
+                Msg.send(p, "&cキットを追加する権限がありません");
                 return true;
             }
             if (a.length < 1) {
@@ -71,8 +89,17 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             String kitName = a[0];
+
+            // 管理者ではなく「追加権限のみ」のプレイヤーは、既存キットの上書きを禁止
+            boolean isAdmin = p.isOp() || p.hasPermission("wars.admin");
+            if (!isAdmin && plugin.kits().exists(kitName)) {
+                Msg.send(p, "&cその名前のキットは既に存在します（新規追加のみ可能です）");
+                Sfx.deny(p);
+                return true;
+            }
+
             plugin.kits().createKit(p, kitName);
-            Msg.send(p, "&aキット &e" + kitName + " &aを保存しました (kits.yml)");
+            Msg.send(p, "&aキット &e" + kitName + " &aを追加・保存しました (作成者: " + p.getName() + ")");
             Sfx.success(p);
             return true;
         }
@@ -92,7 +119,14 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             }
             case "top" -> top(s);
             case "points" -> points(s, a);
-            case "kit" -> handleKitSub(s, a);
+            case "kit" -> {
+                if (!(s instanceof Player p)) {
+                    Msg.send(s, "ゲーム内で実行してください");
+                    return true;
+                }
+                String[] kitArgs = a.length > 1 ? Arrays.copyOfRange(a, 1, a.length) : new String[0];
+                handleKitCommand(p, kitArgs);
+            }
             case "admin" -> {
                 if (s instanceof Player p) AdminGui.open(plugin, p, AdminGui.Page.MAIN);
                 else Msg.send(s, "ゲーム内で実行してください");
@@ -176,23 +210,68 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
-    private void handleKitSub(CommandSender s, String[] a) {
-        if (!(s instanceof Player p)) {
-            Msg.send(s, "ゲーム内で実行してください");
-            return;
-        }
-
-        if (a.length == 1) {
+    /** /kit および /wars kit 共通の処理 */
+    private void handleKitCommand(Player p, String[] a) {
+        if (a.length == 0) {
             KitGui.openList(plugin, p);
             return;
         }
 
-        if (a[1].equalsIgnoreCase("area")) {
-            if (a.length < 3) {
-                Msg.send(p, "&c/wars kit area <pos1|pos2|clear|info>");
+        String sub = a[0].toLowerCase();
+
+        // ★ 権限管理: /kit perm <add|remove|list> [player] [create|creative]
+        if (sub.equals("perm")) {
+            if (a.length < 2) {
+                Msg.send(p, "&c使用方法: /kit perm <add|remove|list> [player] [create|creative]");
                 return;
             }
-            String op = a[2].toLowerCase();
+            String action = a[1].toLowerCase();
+            if (action.equals("list")) {
+                List<String> creates = plugin.kits().getCreatePermPlayerNames();
+                List<String> creatives = plugin.kits().getCreativePermPlayerNames();
+                Msg.send(p, "&e[Kit権限一覧]");
+                p.sendMessage(Msg.c(" &aKit追加権限 (create): &f" + (creates.isEmpty() ? "なし" : String.join(", ", creates))));
+                p.sendMessage(Msg.c(" &bエリア自動Creative権限 (creative): &f" + (creatives.isEmpty() ? "なし" : String.join(", ", creatives))));
+                return;
+            }
+            if (a.length < 4) {
+                Msg.send(p, "&c使用方法: /kit perm <add|remove> <player> <create|creative>");
+                return;
+            }
+            String targetName = a[2];
+            String type = a[3].toLowerCase();
+            Player onlineTarget = Bukkit.getPlayerExact(targetName);
+            OfflinePlayer target = onlineTarget != null ? onlineTarget : Bukkit.getOfflinePlayer(targetName);
+            UUID uuid = target.getUniqueId();
+
+            boolean allow = action.equals("add") || action.equals("grant");
+            if (type.equals("create")) {
+                plugin.kits().setCreatePerm(uuid, allow);
+                Msg.send(p, "&e" + targetName + " &fの &a[Kit追加のみ権限] &fを " + (allow ? "&a付与" : "&c剥奪") + " &fしました");
+                if (onlineTarget != null) {
+                    Msg.send(onlineTarget, allow ? "&aKit追加権限 (/createkit) が付与されました！" : "&cKit追加権限が解除されました");
+                }
+                Sfx.success(p);
+            } else if (type.equals("creative")) {
+                plugin.kits().setCreativePerm(uuid, allow);
+                Msg.send(p, "&e" + targetName + " &fの &b[Kitエリア自動クリエイティブ権限] &fを " + (allow ? "&a付与" : "&c剥奪") + " &fしました");
+                if (onlineTarget != null) {
+                    Msg.send(onlineTarget, allow ? "&bKit制作エリアでの自動クリエイティブ権限が付与されました！" : "&cKit制作エリアでの自動クリエイティブ権限が解除されました");
+                }
+                Sfx.success(p);
+            } else {
+                Msg.send(p, "&c権限タイプは create または creative を指定してください");
+            }
+            return;
+        }
+
+        // エリア設定: /kit area <pos1|pos2|clear|info>
+        if (sub.equals("area")) {
+            if (a.length < 2) {
+                Msg.send(p, "&c/kit area <pos1|pos2|clear|info>");
+                return;
+            }
+            String op = a[1].toLowerCase();
             Map<Integer, Location> map = tempAreaPos.computeIfAbsent(p.getUniqueId(), k -> new HashMap<>());
 
             switch (op) {
@@ -219,11 +298,12 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                         Msg.send(p, "&aKit制作エリアは有効です");
                     }
                 }
-                default -> Msg.send(p, "&c/wars kit area <pos1|pos2|clear|info>");
+                default -> Msg.send(p, "&c/kit area <pos1|pos2|clear|info>");
             }
-        } else {
-            KitGui.openList(plugin, p);
+            return;
         }
+
+        KitGui.openList(plugin, p);
     }
 
     private void checkAndApplyArea(Player p, Map<Integer, Location> map) {
@@ -239,7 +319,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             Msg.send(p, "&7このエリア内では投票アイテムが消え、自由なKit作成が可能になります。");
             Sfx.success(p);
         } else {
-            Msg.send(p, "&7もう一方の角に立って &f/wars kit area " + (map.containsKey(1) ? "pos2" : "pos1") + " &7を実行してください");
+            Msg.send(p, "&7もう一方の角に立って &f/kit area " + (map.containsKey(1) ? "pos2" : "pos1") + " &7を実行してください");
         }
     }
 
@@ -258,8 +338,10 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         s.sendMessage(Msg.c("&7/wars top &f- 累計ポイントTOP10"));
         s.sendMessage(Msg.c("&7/wars points [name] &f- 累計ポイント"));
         if (s.hasPermission("wars.admin")) {
-            s.sendMessage(Msg.c("&6[管理] &7/wars kit &f- Kit一覧・管理GUI"));
-            s.sendMessage(Msg.c("&6[管理] &7/wars kit area pos1|pos2|clear &f- Kit制作エリアの設定"));
+            s.sendMessage(Msg.c("&6[管理] &7/kit &f- Kit一覧・管理GUI"));
+            s.sendMessage(Msg.c("&6[管理] &7/kit area pos1|pos2|clear &f- Kit制作エリアの設定"));
+            s.sendMessage(Msg.c("&6[管理] &7/kit perm add|remove <player> create|creative &f- Kit権限付与"));
+            s.sendMessage(Msg.c("&6[管理] &7/kit perm list &f- Kit権限一覧"));
             s.sendMessage(Msg.c("&6[管理] &7/wars admin &f- 設定GUI"));
             s.sendMessage(Msg.c("&6[管理] &7/wars start [mode] &f- 強制開始 / /wars stop"));
             s.sendMessage(Msg.c("&6[管理] &7/wars setlobby | sethologram | setpodium <1-3>"));
@@ -488,13 +570,22 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender s, Command cmd, String alias, String[] a) {
         List<String> out = new ArrayList<>();
+        String cmdName = cmd.getName().toLowerCase();
+
+        // /kit コマンドのタブ補完
+        if (cmdName.equals("kit")) {
+            completeKitArgs(a, out);
+            String last = a[a.length - 1].toLowerCase();
+            out.removeIf(x -> !x.toLowerCase().startsWith(last));
+            return out;
+        }
+
         if (a.length == 1) {
             out.addAll(PUBLIC_SUBS);
             if (s.hasPermission("wars.admin")) out.addAll(ADMIN_SUBS);
-        } else if (a.length == 2 && a[0].equalsIgnoreCase("kit")) {
-            out.addAll(List.of("area"));
-        } else if (a.length == 3 && a[0].equalsIgnoreCase("kit") && a[1].equalsIgnoreCase("area")) {
-            out.addAll(List.of("pos1", "pos2", "clear", "info"));
+        } else if (a[0].equalsIgnoreCase("kit")) {
+            String[] kitArgs = Arrays.copyOfRange(a, 1, a.length);
+            completeKitArgs(kitArgs, out);
         } else if (a.length == 2 && a[0].equalsIgnoreCase("arena")) {
             out.addAll(List.of("create", "build", "paste", "addspawn", "clearspawns", "enable", "disable", "delete", "tp", "list"));
         } else if (a.length == 2 && a[0].equalsIgnoreCase("map")) {
@@ -517,5 +608,21 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         String last = a[a.length - 1].toLowerCase();
         out.removeIf(x -> !x.toLowerCase().startsWith(last));
         return out;
+    }
+
+    private void completeKitArgs(String[] kitArgs, List<String> out) {
+        if (kitArgs.length == 1) {
+            out.addAll(List.of("area", "perm"));
+        } else if (kitArgs.length == 2 && kitArgs[0].equalsIgnoreCase("area")) {
+            out.addAll(List.of("pos1", "pos2", "clear", "info"));
+        } else if (kitArgs.length == 2 && kitArgs[0].equalsIgnoreCase("perm")) {
+            out.addAll(List.of("add", "remove", "list"));
+        } else if (kitArgs.length == 3 && kitArgs[0].equalsIgnoreCase("perm")
+                && (kitArgs[1].equalsIgnoreCase("add") || kitArgs[1].equalsIgnoreCase("remove"))) {
+            for (Player online : Bukkit.getOnlinePlayers()) out.add(online.getName());
+        } else if (kitArgs.length == 4 && kitArgs[0].equalsIgnoreCase("perm")
+                && (kitArgs[1].equalsIgnoreCase("add") || kitArgs[1].equalsIgnoreCase("remove"))) {
+            out.addAll(List.of("create", "creative"));
+        }
     }
 }
