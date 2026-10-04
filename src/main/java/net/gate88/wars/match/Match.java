@@ -47,7 +47,6 @@ public final class Match {
     private final BlockTracker blocks;
     private final BorderSpec border;
 
-    // 被攻撃履歴: Map<被攻撃者UUID, Map<攻撃者UUID, 攻撃時刻ミリ秒>>
     private final Map<UUID, Map<UUID, Long>> recentDamagers = new HashMap<>();
 
     private State state = State.PREPARING;
@@ -156,7 +155,7 @@ public final class Match {
                 idx++;
                 Msg.title(p, "&e&l" + mode.displayName, "&7" + mode.graceSeconds() + "秒後に装備が配布されます", 5, 50, 10);
                 p.playSound(p.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 0.4f, 1.2f);
-                Msg.send(p, "あなたの色: " + Colors.code(t.color) + Colors.en(t.color));
+                Msg.send(p, "あなたの色: " + Colors.code(t.color) + "&l" + Colors.en(t.color));
             }
         }
         mode.onStart(this);
@@ -360,7 +359,6 @@ public final class Match {
         recentDamagers.computeIfAbsent(v.uuid, k -> new HashMap<>()).put(a.uuid, System.currentTimeMillis());
     }
 
-    /** victim を脱落させる。killer が null なら直近の攻撃者を探す。 */
     public void eliminate(MatchPlayer victim, MatchPlayer killer, String cause) {
         if (isOver() || !victim.alive) return;
         if (killer == null && victim.lastAttacker != null
@@ -418,10 +416,11 @@ public final class Match {
                 world.strikeLightningEffect(strikeLoc);
             }
 
-            broadcastToMatch(Colors.code(victim.team.color) + Colors.en(victim.team.color) + " &f" + victim.name
-                    + " &7は " + Colors.code(killer.team.color) + Colors.en(killer.team.color) + " &f" + killer.name + " &7に倒された");
+            // ★ キルログも色名を太字 (&l) に設定
+            broadcastToMatch(Colors.code(victim.team.color) + "&l" + Colors.en(victim.team.color) + " &f" + victim.name
+                    + " &7は " + Colors.code(killer.team.color) + "&l" + Colors.en(killer.team.color) + " &f" + killer.name + " &7に倒された");
         } else {
-            broadcastToMatch(Colors.code(victim.team.color) + Colors.en(victim.team.color) + " &f" + victim.name + " &7は脱落した &8(" + cause + ")");
+            broadcastToMatch(Colors.code(victim.team.color) + "&l" + Colors.en(victim.team.color) + " &f" + victim.name + " &7は脱落した &8(" + cause + ")");
         }
 
         recentDamagers.remove(victim.uuid);
@@ -596,7 +595,6 @@ public final class Match {
                 p.setInvulnerable(false);
                 plugin.lobby().sendToLobby(p);
 
-                // ★ 試合終了でロビーに戻った際、旧式のネザースターを上書きし、ホットバー投票アイテムを確実に再配布
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     VoteMenu.giveItems(plugin, p);
                     Colors.applyLobbyDisplay(p);

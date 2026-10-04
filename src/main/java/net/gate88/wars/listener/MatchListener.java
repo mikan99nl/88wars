@@ -9,6 +9,8 @@ import net.gate88.wars.util.Msg;
 import net.gate88.wars.util.Sfx;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
+import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -22,7 +24,7 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.entity.Trident;
+import org.bukkit.event.entity.Trident;
 import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
@@ -48,7 +50,7 @@ public final class MatchListener implements Listener {
         }
     }
 
-    // チャットフォーマット: 本文は必ず白に固定
+    // チャットフォーマット: 色名文字を太文字 (BOLD) に設定、本文は白色固定
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onChat(AsyncChatEvent e) {
         Player p = e.getPlayer();
@@ -60,15 +62,14 @@ public final class MatchListener implements Listener {
                 String colorName = Colors.en(mp.team.color);
                 NamedTextColor teamColor = Colors.textColor(mp.team.color);
 
-                // COLOR (チーム色) + playername (白) + : (灰) + 本文 (白に明示固定)
+                // ★ COLOR (太字・チーム色) + playername (通常・白) + : (灰) + 本文 (白)
                 return Component.text()
-                        .append(Component.text(colorName + " ", teamColor))
+                        .append(Component.text(colorName + " ", teamColor, TextDecoration.BOLD))
                         .append(Component.text(source.getName(), NamedTextColor.WHITE))
                         .append(Component.text(": ", NamedTextColor.GRAY))
                         .append(message.color(NamedTextColor.WHITE))
                         .build();
             } else {
-                // ロビー時
                 return Component.text()
                         .append(Component.text(source.getName(), NamedTextColor.WHITE))
                         .append(Component.text(": ", NamedTextColor.GRAY))
@@ -76,6 +77,44 @@ public final class MatchListener implements Listener {
                         .build();
             }
         });
+    }
+
+    // ---------------------------------------------------------------- バケツ操作 (設置・回収を解禁)
+    /** ★ 試合中バケツに入った液体・アイテムを設置できるようにする */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onBucketEmpty(PlayerBucketEmptyEvent e) {
+        Match m = plugin.match();
+        MatchPlayer v = mp(e.getPlayer());
+        if (m == null || v == null) return;
+        if (m.isOver() || !v.alive) {
+            e.setCancelled(true);
+            return;
+        }
+
+        Block placedBlock = e.getBlockClicked().getRelative(e.getBlockFace());
+        if (!m.mode().canPlace(m, v, placedBlock)) {
+            e.setCancelled(true);
+            return;
+        }
+
+        // 設置した液体/ブロックを原状復帰（BlockTracker）に登録
+        boolean exempt = m.mode().decayExempt(m, placedBlock);
+        int sec = m.mode().blockDecaySeconds();
+        m.blocks().track(placedBlock, placedBlock.getState(), !exempt && sec > 0, sec);
+    }
+
+    /** 試合中のバケツ汲み取りも許可 */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onBucketFill(PlayerBucketFillEvent e) {
+        Match m = plugin.match();
+        MatchPlayer v = mp(e.getPlayer());
+        if (m == null || v == null) return;
+        if (m.isOver() || !v.alive) {
+            e.setCancelled(true);
+            return;
+        }
+        Block block = e.getBlockClicked();
+        m.blocks().trackFixed(block, block.getState());
     }
 
     // ---------------------------------------------------------------- ダメージ / 脱落
@@ -173,16 +212,6 @@ public final class MatchListener implements Listener {
         e.setExpToDrop(0);
         m.blocks().onBroken(e.getBlock());
         m.mode().onBlockBroken(m, v, e.getBlock());
-    }
-
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onBucketEmpty(PlayerBucketEmptyEvent e) {
-        if (mp(e.getPlayer()) != null) e.setCancelled(true);
-    }
-
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onBucketFill(PlayerBucketFillEvent e) {
-        if (mp(e.getPlayer()) != null) e.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)

@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Set;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.DyeColor;
 import org.bukkit.Material;
@@ -24,7 +25,6 @@ public final class Colors {
         return Material.valueOf(c.name() + "_WOOL");
     }
 
-    /** 英語表記カラーネーム (頭上ネームタグ・チャット・タブ用) */
     public static String en(DyeColor c) {
         return switch (c) {
             case RED -> "RED";
@@ -67,7 +67,6 @@ public final class Colors {
         };
     }
 
-    /** &カラーコード */
     public static String code(DyeColor c) {
         return switch (c) {
             case RED -> "&c";
@@ -88,7 +87,6 @@ public final class Colors {
         };
     }
 
-    /** Paper 1.21 Adventure 用の NamedTextColor */
     public static NamedTextColor textColor(DyeColor c) {
         return switch (c) {
             case RED -> NamedTextColor.RED;
@@ -129,25 +127,23 @@ public final class Colors {
     }
 
     /**
-     * 試合中: 頭上ネームタグおよびタブリストに「COLOR playername」を適用する
-     * (例: 紫色で PURPLE + 白色で bubulz)
+     * 試合中: 頭上ネームタグおよびタブリストに「COLOR playername」を太文字で適用する
      */
     public static void applyPlayerDisplay(Player player, DyeColor dyeColor) {
         String colorName = en(dyeColor);
         NamedTextColor teamTextColor = textColor(dyeColor);
 
-        // 1. タブリスト (Tab): 「COLOR playername」
+        // 1. タブリスト (Tab): ★ 色名を太文字 (BOLD) に設定
         Component tabName = Component.text()
-                .append(Component.text(colorName + " ", teamTextColor))
+                .append(Component.text(colorName + " ", teamTextColor, TextDecoration.BOLD))
                 .append(Component.text(player.getName(), NamedTextColor.WHITE))
                 .build();
         player.playerListName(tabName);
 
-        // 2. 頭上ネームタグ (Scoreboard Team):
-        // 各プレイヤーが見ているScoreboardすべてにTeamとPrefixを登録して確実に表示させる
+        // 2. 頭上ネームタグ (Scoreboard Team): ★ 色名を太文字 (BOLD) に設定
         String teamName = "w_" + colorName.toLowerCase();
         if (teamName.length() > 16) teamName = teamName.substring(0, 16);
-        Component prefixComponent = Component.text(colorName + " ", teamTextColor);
+        Component prefixComponent = Component.text(colorName + " ", teamTextColor, TextDecoration.BOLD);
 
         Set<Scoreboard> scoreboards = new HashSet<>();
         scoreboards.add(Bukkit.getScoreboardManager().getMainScoreboard());
@@ -170,9 +166,6 @@ public final class Colors {
         }
     }
 
-    /**
-     * ロビー時: 頭上ネームタグおよびタブリストをリセット
-     */
     public static void applyLobbyDisplay(Player player) {
         player.playerListName(Component.text(player.getName(), NamedTextColor.WHITE));
 

@@ -85,7 +85,6 @@ public final class LobbyListener implements Listener {
         });
     }
 
-    /** Kit制作エリアへの進入・退出を検知 */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent e) {
         if (e.getFrom().getBlockX() == e.getTo().getBlockX()
@@ -132,7 +131,7 @@ public final class LobbyListener implements Listener {
 
         if (plugin.kits().isInKitArea(p.getLocation())) return;
 
-        // ★ OP管理ツールの処理 (スロット17 / ネザースター)
+        // OP管理ツールの処理 (スロット17 / ネザースター)
         if (VoteMenu.isAdminTool(plugin, e.getItem())) {
             e.setCancelled(true);
             boolean isLeft = (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK);
@@ -142,10 +141,14 @@ public final class LobbyListener implements Listener {
 
         if (e.getAction() != Action.RIGHT_CLICK_AIR && e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
 
-        int slot = p.getInventory().getHeldItemSlot();
-        if ((slot >= 0 && slot <= 6) || slot == VoteMenu.RANDOM_SLOT) {
-            e.setCancelled(true);
-            VoteMenu.handleClick(plugin, p, slot);
+        // ★ 修正: 投票配布が有効で、かつ「実際に投票アイテムを持っている時」のみ投票処理を実行
+        // （アイテムを消した場所や、別のアイテムを置いた場合はキャンセルせず通常使用させる）
+        if (VoteMenu.isVoteItemsEnabled() && VoteMenu.isVoteItem(plugin, e.getItem())) {
+            int slot = p.getInventory().getHeldItemSlot();
+            if ((slot >= 0 && slot <= 6) || slot == VoteMenu.RANDOM_SLOT) {
+                e.setCancelled(true);
+                VoteMenu.handleClick(plugin, p, slot);
+            }
         }
     }
 
@@ -191,7 +194,6 @@ public final class LobbyListener implements Listener {
     public void onClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
 
-        // ★ インベントリ内でOP管理ツールをクリックした場合の直接操作
         if (VoteMenu.isAdminTool(plugin, e.getCurrentItem())) {
             e.setCancelled(true);
             boolean isLeft = e.isLeftClick();
