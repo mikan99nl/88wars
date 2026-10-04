@@ -6,7 +6,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import net.gate88.wars.WarsPlugin;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.enchantments.Enchantment;
@@ -19,6 +22,12 @@ public final class KitManager {
     private File file;
     private YamlConfiguration config;
     private String forcedKit = null; // 運営が指定したキット（null の場合はランダム）
+
+    // Kit制作エリアの座標
+    private String areaWorld;
+    private int minX, minY, minZ;
+    private int maxX, maxY, maxZ;
+    private boolean hasArea = false;
 
     public KitManager(WarsPlugin plugin) {
         this.plugin = plugin;
@@ -33,8 +42,7 @@ public final class KitManager {
         if (!file.exists()) {
             try {
                 boolean ignored = file.createNewFile();
-            } catch (IOException ignored) {
-            }
+            } catch (IOException ignored) {}
         }
         config = YamlConfiguration.loadConfiguration(file);
 
@@ -42,6 +50,8 @@ public final class KitManager {
         if (kitsSec == null || kitsSec.getKeys(false).isEmpty()) {
             registerDefaults();
         }
+
+        loadArea();
     }
 
     public void save() {
@@ -56,6 +66,67 @@ public final class KitManager {
         load();
     }
 
+    // ------------------------------------------------ Kit制作エリア管理
+    private void loadArea() {
+        ConfigurationSection sec = config.getConfigurationSection("kit-area");
+        if (sec != null && sec.getBoolean("enabled", false)) {
+            areaWorld = sec.getString("world");
+            minX = sec.getInt("minX");
+            minY = sec.getInt("minY");
+            minZ = sec.getInt("minZ");
+            maxX = sec.getInt("maxX");
+            maxY = sec.getInt("maxY");
+            maxZ = sec.getInt("maxZ");
+            hasArea = areaWorld != null && Bukkit.getWorld(areaWorld) != null;
+        } else {
+            hasArea = false;
+        }
+    }
+
+    public void setArea(Location p1, Location p2) {
+        if (!p1.getWorld().equals(p2.getWorld())) return;
+        areaWorld = p1.getWorld().getName();
+        minX = Math.min(p1.getBlockX(), p2.getBlockX());
+        minY = Math.min(p1.getBlockY(), p2.getBlockY());
+        minZ = Math.min(p1.getBlockZ(), p2.getBlockZ());
+        maxX = Math.max(p1.getBlockX(), p2.getBlockX());
+        maxY = Math.max(p1.getBlockY(), p2.getBlockY());
+        maxZ = Math.max(p1.getBlockZ(), p2.getBlockZ());
+        hasArea = true;
+
+        ConfigurationSection sec = config.createSection("kit-area");
+        sec.set("enabled", true);
+        sec.set("world", areaWorld);
+        sec.set("minX", minX);
+        sec.set("minY", minY);
+        sec.set("minZ", minZ);
+        sec.set("maxX", maxX);
+        sec.set("maxY", maxY);
+        sec.set("maxZ", maxZ);
+        save();
+    }
+
+    public void clearArea() {
+        hasArea = false;
+        config.set("kit-area", null);
+        save();
+    }
+
+    public boolean hasArea() {
+        return hasArea;
+    }
+
+    /** プレイヤーの位置がKit制作エリア内にあるかを判定 */
+    public boolean isInKitArea(Location loc) {
+        if (!hasArea || loc == null || loc.getWorld() == null) return false;
+        if (!loc.getWorld().getName().equals(areaWorld)) return false;
+        int x = loc.getBlockX();
+        int y = loc.getBlockY();
+        int z = loc.getBlockZ();
+        return x >= minX && x <= maxX && y >= minY && y <= maxY && z >= minZ && z <= maxZ;
+    }
+
+    // ------------------------------------------------ Kitデータ管理
     private void registerDefaults() {
         saveDefaultKit("iron_warrior", "鉄フルアーマー + 石の剣",
                 Material.IRON_HELMET, Material.IRON_CHESTPLATE, Material.IRON_LEGGINGS, Material.IRON_BOOTS, null,
@@ -172,8 +243,7 @@ public final class KitManager {
                     if (item != null && slot >= 0 && slot < inv.getSize()) {
                         inv.setItem(slot, item);
                     }
-                } catch (NumberFormatException ignored) {
-                }
+                } catch (NumberFormatException ignored) {}
             }
         }
 
@@ -188,7 +258,6 @@ public final class KitManager {
         save();
     }
 
-    // ------------------------------------------------ ON / OFF 機能
     public boolean isEnabled(String kitId) {
         return config.getBoolean("kits." + kitId.toLowerCase() + ".enabled", true);
     }
@@ -198,7 +267,6 @@ public final class KitManager {
         save();
     }
 
-    // ------------------------------------------------ 運営指定キット機能
     public String getForcedKit() {
         return forcedKit;
     }
@@ -211,15 +279,12 @@ public final class KitManager {
         this.forcedKit = null;
     }
 
-    /**
-     * 試合用: 運営指定キットがあればそれ、無ければ有効なKitからランダム抽選
-     */
     public String pickMatchKit() {
         if (forcedKit != null && config.contains("kits." + forcedKit.toLowerCase())) {
             return forcedKit;
         }
         List<String> pool = getEnabledKitNames();
-        if (pool.isEmpty()) pool = getKitNames(); // 全てOFFの場合は全キットから
+        if (pool.isEmpty()) pool = getKitNames();
         if (pool.isEmpty()) return null;
         return pool.get(ThreadLocalRandom.current().nextInt(pool.size()));
     }
@@ -235,9 +300,6 @@ public final class KitManager {
         return new ArrayList<>(sec.getKeys(false));
     }
 
-    /**
-     * 有効(ON)になっているキットのみを取得
-     */
     public List<String> getEnabledKitNames() {
         List<String> list = new ArrayList<>();
         for (String id : getKitNames()) {
@@ -246,13 +308,9 @@ public final class KitManager {
         return list;
     }
 
-    /**
-     * アイコン表示用（胸当て → 兜 → ブーツ → レギンス → スロット内のアイテム の順で安全に探す）
-     */
     public ItemStack getKitIcon(String kitId) {
         String path = "kits." + kitId.toLowerCase();
 
-        // 1. 防具から探す
         for (String armor : List.of("chestplate", "helmet", "boots", "leggings")) {
             ItemStack piece = config.getItemStack(path + ".armor." + armor);
             if (piece != null && !piece.getType().isAir()) {
@@ -260,7 +318,6 @@ public final class KitManager {
             }
         }
 
-        // 2. インベントリスロットから最初に見つかった非空気アイテムを探す
         ConfigurationSection slots = config.getConfigurationSection(path + ".slots");
         if (slots != null) {
             for (String key : slots.getKeys(false)) {
@@ -271,7 +328,6 @@ public final class KitManager {
             }
         }
 
-        // 3. なにも無ければチェスト
         return new ItemStack(Material.CHEST);
     }
 }

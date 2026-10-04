@@ -1,7 +1,10 @@
 package net.gate88.wars.command;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.arena.Arena;
 import net.gate88.wars.arena.ArenaBuilder;
@@ -23,6 +26,8 @@ import org.bukkit.entity.Player;
 
 public final class WarsCommand implements CommandExecutor, TabCompleter {
     private final WarsPlugin plugin;
+    // エリア設定用の一時座標保持 Map<プレイヤーUUID, Map<1or2, Location>>
+    private final Map<UUID, Map<Integer, Location>> tempAreaPos = new HashMap<>();
 
     public WarsCommand(WarsPlugin plugin) {
         this.plugin = plugin;
@@ -87,10 +92,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             }
             case "top" -> top(s);
             case "points" -> points(s, a);
-            case "kit" -> {
-                if (s instanceof Player p) KitGui.openList(plugin, p);
-                else Msg.send(s, "ゲーム内で実行してください");
-            }
+            case "kit" -> handleKitSub(s, a);
             case "admin" -> {
                 if (s instanceof Player p) AdminGui.open(plugin, p, AdminGui.Page.MAIN);
                 else Msg.send(s, "ゲーム内で実行してください");
@@ -174,6 +176,77 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    private void handleKitSub(CommandSender s, String[] a) {
+        if (!(s instanceof Player p)) {
+            Msg.send(s, "ゲーム内で実行してください");
+            return;
+        }
+
+        if (a.length == 1) {
+            KitGui.openList(plugin, p);
+            return;
+        }
+
+        if (a[1].equalsIgnoreCase("area")) {
+            if (a.length < 3) {
+                Msg.send(p, "&c/wars kit area <pos1|pos2|clear|info>");
+                return;
+            }
+            String op = a[2].toLowerCase();
+            Map<Integer, Location> map = tempAreaPos.computeIfAbsent(p.getUniqueId(), k -> new HashMap<>());
+
+            switch (op) {
+                case "pos1", "1" -> {
+                    map.put(1, p.getLocation().getBlock().getLocation());
+                    Msg.send(p, "&aKit制作エリア 角① を設定しました: &e" + formatLoc(p.getLocation()));
+                    checkAndApplyArea(p, map);
+                }
+                case "pos2", "2" -> {
+                    map.put(2, p.getLocation().getBlock().getLocation());
+                    Msg.send(p, "&aKit制作エリア 角② を設定しました: &e" + formatLoc(p.getLocation()));
+                    checkAndApplyArea(p, map);
+                }
+                case "clear" -> {
+                    plugin.kits().clearArea();
+                    map.clear();
+                    Msg.send(p, "&eKit制作エリアを解除しました");
+                    Sfx.success(p);
+                }
+                case "info" -> {
+                    if (!plugin.kits().hasArea()) {
+                        Msg.send(p, "&7Kit制作エリアは現在設定されていません");
+                    } else {
+                        Msg.send(p, "&aKit制作エリアは有効です");
+                    }
+                }
+                default -> Msg.send(p, "&c/wars kit area <pos1|pos2|clear|info>");
+            }
+        } else {
+            KitGui.openList(plugin, p);
+        }
+    }
+
+    private void checkAndApplyArea(Player p, Map<Integer, Location> map) {
+        if (map.containsKey(1) && map.containsKey(2)) {
+            Location p1 = map.get(1);
+            Location p2 = map.get(2);
+            if (!p1.getWorld().equals(p2.getWorld())) {
+                Msg.send(p, "&c2つの座標は同じワールドで設定してください");
+                return;
+            }
+            plugin.kits().setArea(p1, p2);
+            Msg.send(p, "&6&l[完了] &aKit制作エリアを設定・保存しました！");
+            Msg.send(p, "&7このエリア内では投票アイテムが消え、自由なKit作成が可能になります。");
+            Sfx.success(p);
+        } else {
+            Msg.send(p, "&7もう一方の角に立って &f/wars kit area " + (map.containsKey(1) ? "pos2" : "pos1") + " &7を実行してください");
+        }
+    }
+
+    private String formatLoc(Location l) {
+        return l.getBlockX() + ", " + l.getBlockY() + ", " + l.getBlockZ();
+    }
+
     private void withPlayer(CommandSender s, java.util.function.Consumer<Player> c) {
         if (s instanceof Player p) c.accept(p);
         else Msg.send(s, "ゲーム内で実行してください");
@@ -185,7 +258,8 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         s.sendMessage(Msg.c("&7/wars top &f- 累計ポイントTOP10"));
         s.sendMessage(Msg.c("&7/wars points [name] &f- 累計ポイント"));
         if (s.hasPermission("wars.admin")) {
-            s.sendMessage(Msg.c("&6[管理] &7/wars kit &f- Kit管理・編集GUI"));
+            s.sendMessage(Msg.c("&6[管理] &7/wars kit &f- Kit一覧・管理GUI"));
+            s.sendMessage(Msg.c("&6[管理] &7/wars kit area pos1|pos2|clear &f- Kit制作エリアの設定"));
             s.sendMessage(Msg.c("&6[管理] &7/wars admin &f- 設定GUI"));
             s.sendMessage(Msg.c("&6[管理] &7/wars start [mode] &f- 強制開始 / /wars stop"));
             s.sendMessage(Msg.c("&6[管理] &7/wars setlobby | sethologram | setpodium <1-3>"));
@@ -417,6 +491,10 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         if (a.length == 1) {
             out.addAll(PUBLIC_SUBS);
             if (s.hasPermission("wars.admin")) out.addAll(ADMIN_SUBS);
+        } else if (a.length == 2 && a[0].equalsIgnoreCase("kit")) {
+            out.addAll(List.of("area"));
+        } else if (a.length == 3 && a[0].equalsIgnoreCase("kit") && a[1].equalsIgnoreCase("area")) {
+            out.addAll(List.of("pos1", "pos2", "clear", "info"));
         } else if (a.length == 2 && a[0].equalsIgnoreCase("arena")) {
             out.addAll(List.of("create", "build", "paste", "addspawn", "clearspawns", "enable", "disable", "delete", "tp", "list"));
         } else if (a.length == 2 && a[0].equalsIgnoreCase("map")) {

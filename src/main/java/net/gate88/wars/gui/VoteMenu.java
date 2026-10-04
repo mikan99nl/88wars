@@ -25,6 +25,11 @@ public final class VoteMenu {
 
     /** プレイヤーのホットバーに投票用アイテムを配布・更新 */
     public static void giveItems(WarsPlugin plugin, Player p) {
+        // ★ Kit制作エリア内にいる場合は配布を阻止
+        if (plugin.kits().isInKitArea(p.getLocation())) {
+            return;
+        }
+
         PlayerInventory inv = p.getInventory();
         LobbyManager lobby = plugin.lobby();
         String myVote = lobby.voteOf(p);
@@ -43,7 +48,7 @@ public final class VoteMenu {
         // スロット 7: 空き
         inv.setItem(7, null);
 
-        // スロット 8 (一番右): ランダム抽選
+        // スロット 8: ランダム抽選
         boolean rnd = LobbyManager.RANDOM.equals(myVote);
         inv.setItem(RANDOM_SLOT, createRandomItem(lobby, rnd));
 
@@ -53,24 +58,25 @@ public final class VoteMenu {
     /** ロビーにいる全プレイヤーのホットバー投票表示を最新化 */
     public static void refreshAll(WarsPlugin plugin) {
         for (Player p : Bukkit.getOnlinePlayers()) {
-            // 試合中ではない（ロビーにいる）プレイヤーのホットバーを更新
             if (plugin.match() == null || plugin.match().participant(p) == null) {
-                giveItems(plugin, p);
+                // エリア外のロビー待機プレイヤーのみ更新
+                if (!plugin.kits().isInKitArea(p.getLocation())) {
+                    giveItems(plugin, p);
+                }
             }
         }
     }
 
-    /** 互換用: 旧コードから open が呼ばれた場合もホットバーを更新 */
     public static void open(WarsPlugin plugin, Player p) {
         giveItems(plugin, p);
         Msg.actionBar(p, "&eホットバーのアイテムを右クリックして投票してください！");
     }
 
-    /** ホットバーを右クリックした時の投票処理 */
     public static void handleClick(WarsPlugin plugin, Player p, int slot) {
+        if (plugin.kits().isInKitArea(p.getLocation())) return;
+
         LobbyManager lobby = plugin.lobby();
 
-        // スロット 8: ランダム抽選
         if (slot == RANDOM_SLOT) {
             lobby.toggleVote(p, LobbyManager.RANDOM);
             p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 0.6f, 1.2f);
@@ -78,7 +84,6 @@ public final class VoteMenu {
             return;
         }
 
-        // スロット 0〜6: 各モード
         List<WarsMode> modes = plugin.modes().all();
         if (slot >= 0 && slot < modes.size() && slot < 7) {
             WarsMode md = modes.get(slot);
