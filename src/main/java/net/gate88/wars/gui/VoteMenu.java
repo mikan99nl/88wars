@@ -9,6 +9,7 @@ import net.gate88.wars.util.Msg;
 import net.gate88.wars.util.Sfx;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Sound;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
@@ -16,21 +17,49 @@ import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 
-/** ホットバー投票システム (各モードに1票 / ランダム抽選に1票) */
+/** ホットバー投票システム ＆ OP管理ツール */
 public final class VoteMenu {
-    public static final int RANDOM_SLOT = 8; // ホットバーの一番右 (スロット9)
+    public static final int RANDOM_SLOT = 8;
+    public static final int OP_TOOL_SLOT = 17; // インベントリの右上 (最上段右端)
+
+    // ★ 起動時は常に true (通常通り配布)。サーバー再起動で自動的に通常状態に戻る
+    private static boolean voteItemsEnabled = true;
 
     private VoteMenu() {}
 
-    /** プレイヤーのホットバーに投票用アイテムを配布・更新 */
+    public static boolean isVoteItemsEnabled() {
+        return voteItemsEnabled;
+    }
+
+    /** 投票アイテムの配布有効/無効を切り替える */
+    public static void setVoteItemsEnabled(WarsPlugin plugin, boolean enabled) {
+        voteItemsEnabled = enabled;
+        if (enabled) {
+            // 有効化時: ロビーの全員に自動で配り直す
+            refreshAll(plugin);
+            Msg.broadcast("&a[88WARS] 投票用アイテムの配布が再開されました。");
+        } else {
+            // 無効化時: 全員の手持ちから投票アイテムおよび管理ツールを消去
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                if (plugin.match() == null || plugin.match().participant(p) == null) {
+                    clearLobbyItems(p);
+                }
+            }
+            Msg.broadcast("&c[88WARS] 投票用アイテムの配布が一時的に無効化されました。");
+        }
+    }
+
+    /** プレイヤーのインベントリに投票用アイテムおよびOP管理ツールを配布 */
     public static void giveItems(WarsPlugin plugin, Player p) {
-        // ★ Kit制作エリア内にいる場合は配布を阻止
-        if (plugin.kits().isInKitArea(p.getLocation())) {
+        PlayerInventory inv = p.getInventory();
+
+        // 配布無効化時、またはKit制作エリア内は配布しない
+        if (!voteItemsEnabled || plugin.kits().isInKitArea(p.getLocation())) {
             return;
         }
 
-        PlayerInventory inv = p.getInventory();
         LobbyManager lobby = plugin.lobby();
         String myVote = lobby.voteOf(p);
         List<WarsMode> modes = plugin.modes().all();
@@ -45,21 +74,36 @@ public final class VoteMenu {
             }
         }
 
-        // スロット 7: 空き
         inv.setItem(7, null);
 
         // スロット 8: ランダム抽選
         boolean rnd = LobbyManager.RANDOM.equals(myVote);
         inv.setItem(RANDOM_SLOT, createRandomItem(lobby, rnd));
 
+        // ★ OP持ち限定: インベントリ右上 (スロット17) に管理ツールを配置
+        if (p.isOp()) {
+            inv.setItem(OP_TOOL_SLOT, createAdminToolItem(plugin));
+        } else {
+            inv.setItem(OP_TOOL_SLOT, null);
+        }
+
         p.updateInventory();
     }
 
-    /** ロビーにいる全プレイヤーのホットバー投票表示を最新化 */
+    /** ロビーの投票アイテムおよびOPツールを消去 */
+    public static void clearLobbyItems(Player p) {
+        PlayerInventory inv = p.getInventory();
+        for (int i = 0; i < 9; i++) {
+            inv.setItem(i, null);
+        }
+        inv.setItem(OP_TOOL_SLOT, null);
+        p.updateInventory();
+    }
+
     public static void refreshAll(WarsPlugin plugin) {
+        if (!voteItemsEnabled) return;
         for (Player p : Bukkit.getOnlinePlayers()) {
             if (plugin.match() == null || plugin.match().participant(p) == null) {
-                // エリア外のロビー待機プレイヤーのみ更新
                 if (!plugin.kits().isInKitArea(p.getLocation())) {
                     giveItems(plugin, p);
                 }
@@ -73,7 +117,7 @@ public final class VoteMenu {
     }
 
     public static void handleClick(WarsPlugin plugin, Player p, int slot) {
-        if (plugin.kits().isInKitArea(p.getLocation())) return;
+        if (!voteItemsEnabled || plugin.kits().isInKitArea(p.getLocation())) return;
 
         LobbyManager lobby = plugin.lobby();
 
@@ -99,6 +143,46 @@ public final class VoteMenu {
                 refreshAll(plugin);
             }
         }
+    }
+
+    /** ★ OP管理ツールをクリックした時の処理 */
+    public static void handleAdminTool(WarsPlugin plugin, Player p, boolean isLeftClick) {
+        if (!p.isOp()) return;
+        if (isLeftClick) {
+            // 左クリック: ゲーム即時スタート
+            if (!plugin.lobby().forceStart(null)) {
+                Msg.send(p, "&c開始できません (試合中 または 対象プレイヤーがいません)");
+            } else {
+                Msg.send(p, "&a試合を開始します！");
+            }
+        } else {
+            // 右クリック: Kit管理GUIを開く
+            KitGui.openList(plugin, p);
+        }
+    }
+
+    /** OP管理ツールアイテムの生成 */
+    public static ItemStack createAdminToolItem(WarsPlugin plugin) {
+        ItemStack item = new ItemStack(Material.NETHER_STAR);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.displayName(Msg.c("&6&l【OP管理ツール】"));
+            meta.lore(List.of(
+                    Msg.c("&a[左クリック] &fゲームを即時スタート"),
+                    Msg.c("&b[右クリック] &fKit管理GUIを開く"),
+                    Msg.c("&7※インベントリ右上(スロット17)常駐")
+            ));
+            meta.addEnchant(Enchantment.UNBREAKING, 1, true);
+            meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "op_tool"), PersistentDataType.BYTE, (byte) 1);
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+
+    public static boolean isAdminTool(WarsPlugin plugin, ItemStack it) {
+        if (it == null || !it.hasItemMeta()) return false;
+        return it.getItemMeta().getPersistentDataContainer().has(new NamespacedKey(plugin, "op_tool"), PersistentDataType.BYTE);
     }
 
     private static ItemStack createModeItem(LobbyManager lobby, WarsMode md, String myVote) {

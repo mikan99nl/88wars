@@ -102,7 +102,6 @@ public final class LobbyListener implements Listener {
 
         if (!wasIn && nowIn) {
             p.getInventory().clear();
-            // ★ OPまたはcreative権限を持っているプレイヤーのみクリエイティブ化
             if (plugin.kits().canAutoCreative(p)) {
                 p.setGameMode(GameMode.CREATIVE);
             }
@@ -112,7 +111,6 @@ public final class LobbyListener implements Listener {
             }
             p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.5f);
         } else if (wasIn && !nowIn) {
-            // ★ エリアから出た時は必ずアドベンチャーに戻し、投票アイテムを付与
             plugin.getServer().getScheduler().runTask(plugin, () -> {
                 if (!p.isOnline() || !inLobby(p)) return;
                 p.getInventory().clear();
@@ -125,14 +123,24 @@ public final class LobbyListener implements Listener {
         }
     }
 
+    /** ホットバーアイテムの右クリック・左クリック処理 */
     @EventHandler
     public void onInteract(PlayerInteractEvent e) {
         if (e.getHand() != EquipmentSlot.HAND) return;
-        if (e.getAction() != Action.RIGHT_CLICK_AIR && e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         Player p = e.getPlayer();
         if (!inLobby(p)) return;
 
         if (plugin.kits().isInKitArea(p.getLocation())) return;
+
+        // ★ OP管理ツールの処理 (スロット17 / ネザースター)
+        if (VoteMenu.isAdminTool(plugin, e.getItem())) {
+            e.setCancelled(true);
+            boolean isLeft = (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK);
+            VoteMenu.handleAdminTool(plugin, p, isLeft);
+            return;
+        }
+
+        if (e.getAction() != Action.RIGHT_CLICK_AIR && e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
 
         int slot = p.getInventory().getHeldItemSlot();
         if ((slot >= 0 && slot <= 6) || slot == VoteMenu.RANDOM_SLOT) {
@@ -182,9 +190,17 @@ public final class LobbyListener implements Listener {
     @EventHandler
     public void onClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
+
+        // ★ インベントリ内でOP管理ツールをクリックした場合の直接操作
+        if (VoteMenu.isAdminTool(plugin, e.getCurrentItem())) {
+            e.setCancelled(true);
+            boolean isLeft = e.isLeftClick();
+            VoteMenu.handleAdminTool(plugin, p, isLeft);
+            return;
+        }
+
         var holder = e.getView().getTopInventory().getHolder();
 
-        // KitPermGui の処理 (OP限定)
         if (holder instanceof KitPermGui kpg) {
             e.setCancelled(true);
             if (e.getClickedInventory() == e.getView().getTopInventory()) {

@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,6 +16,7 @@ import net.gate88.wars.WarsPlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.enchantments.Enchantment;
@@ -35,7 +37,6 @@ public final class KitManager {
     private int maxX, maxY, maxZ;
     private boolean hasArea = false;
 
-    // 権限保持者マップ: Map<UUID, プレイヤー名> (オフライン対応)
     private final Map<UUID, String> createPerms = new HashMap<>();
     private final Map<UUID, String> creativePerms = new HashMap<>();
 
@@ -63,6 +64,8 @@ public final class KitManager {
 
         loadArea();
         loadPermissions();
+
+        // ★ サーバー起動時に重複キットを整理 (完全重複は削除・内容が異なり名前が重複するものは番号付け)
         removeDuplicateKits();
     }
 
@@ -76,6 +79,95 @@ public final class KitManager {
 
     public void reload() {
         load();
+    }
+
+    // ------------------------------------------------ 重複Kitの削除＆番号付け整理
+    private void removeDuplicateKits() {
+        ConfigurationSection kitsSec = config.getConfigurationSection("kits");
+        if (kitsSec == null) return;
+
+        List<String> kitKeys = new ArrayList<>(kitsSec.getKeys(false));
+        Set<String> seenSignatures = new HashSet<>();
+        List<String> toDelete = new ArrayList<>();
+
+        // 1. 完全重複 (内容構成が完全に一致) のKitを削除
+        for (String id : kitKeys) {
+            String path = "kits." + id;
+            String signature = buildKitSignature(path);
+            if (!seenSignatures.add(signature)) {
+                toDelete.add(id);
+            }
+        }
+        for (String id : toDelete) {
+            config.set("kits." + id, null);
+            kitKeys.remove(id);
+            plugin.getLogger().info("[KitManager] 内容が完全重複しているキットを削除しました: " + id);
+        }
+
+        // 2. 内容は異なるが、表示名が重複しているKitに番号付け (古い方を 1、新しい方を 2...)
+        Map<String, List<String>> nameGroups = new LinkedHashMap<>();
+        for (String id : kitKeys) {
+            String path = "kits." + id;
+            String rawName = config.getString(path + ".name", id).trim();
+            // 既に末尾に番号「 1」「 2」がついている場合はベース名を抽出
+            String baseName = rawName.replaceAll(" \\d+$", "").trim();
+            nameGroups.computeIfAbsent(baseName.toLowerCase(), k -> new ArrayList<>()).add(id);
+        }
+
+        boolean changed = !toDelete.isEmpty();
+        for (Map.Entry<String, List<String>> entry : nameGroups.entrySet()) {
+            List<String> ids = entry.getValue();
+            if (ids.size() > 1) {
+                // 登録順（古い順）に 1, 2, 3... と番号を付与
+                for (int i = 0; i < ids.size(); i++) {
+                    String id = ids.get(i);
+                    String baseName = config.getString("kits." + id + ".name", id).replaceAll(" \\d+$", "").trim();
+                    String numberedName = baseName + " " + (i + 1);
+                    config.set("kits." + id + ".name", numberedName);
+                    plugin.getLogger().info("[KitManager] 同名キットに番号を付与しました: " + id + " -> " + numberedName);
+                }
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            save();
+        }
+    }
+
+    private String buildKitSignature(String path) {
+        StringBuilder sb = new StringBuilder();
+        for (String armor : List.of("helmet", "chestplate", "leggings", "boots")) {
+            ItemStack it = config.getItemStack(path + ".armor." + armor);
+            sb.append(armor).append("=").append(itemSig(it)).append(";");
+        }
+        sb.append("offhand=").append(itemSig(config.getItemStack(path + ".offhand"))).append(";");
+
+        ConfigurationSection slots = config.getConfigurationSection(path + ".slots");
+        if (slots != null) {
+            for (String key : slots.getKeys(false)) {
+                sb.append("s").append(key).append("=").append(itemSig(slots.getItemStack(key))).append(";");
+            }
+        }
+
+        ConfigurationSection effs = config.getConfigurationSection(path + ".effects");
+        if (effs != null) {
+            for (String key : effs.getKeys(false)) {
+                if (effs.isConfigurationSection(key)) {
+                    sb.append("e").append(key).append("=")
+                            .append(effs.getInt(key + ".level")).append(":")
+                            .append(effs.getInt(key + ".duration")).append(";");
+                } else {
+                    sb.append("e").append(key).append("=").append(effs.getInt(key)).append(";");
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private String itemSig(ItemStack it) {
+        if (it == null || it.getType().isAir()) return "AIR";
+        return it.getType().name() + "x" + it.getAmount() + ":" + Objects.hashCode(it.getEnchantments());
     }
 
     // ------------------------------------------------ 権限管理 (create / creative / オフライン対応)
@@ -115,7 +207,6 @@ public final class KitManager {
         save();
     }
 
-    /** キットの追加 (/createkit) が可能か */
     public boolean canCreateKit(Player p) {
         return p.isOp()
                 || p.hasPermission("wars.admin")
@@ -123,7 +214,6 @@ public final class KitManager {
                 || createPerms.containsKey(p.getUniqueId());
     }
 
-    /** ★ Kit制作エリアに入った際、自動でクリエイティブモードになるか (OPは常にtrue) */
     public boolean canAutoCreative(Player p) {
         return p.isOp()
                 || p.hasPermission("wars.admin")
@@ -151,83 +241,18 @@ public final class KitManager {
         savePermissions();
     }
 
-    /** 特定プレイヤーの全権限を完全削除 */
     public void removeAllPerms(UUID uuid) {
         createPerms.remove(uuid);
         creativePerms.remove(uuid);
         savePermissions();
     }
 
-    /** 権限を持っているすべてのプレイヤー (UUID -> 名前) のマップを取得 (オフライン含む) */
     public Map<UUID, String> getAllPermHolders() {
         Map<UUID, String> map = new HashMap<>(createPerms);
         for (Map.Entry<UUID, String> e : creativePerms.entrySet()) {
             map.putIfAbsent(e.getKey(), e.getValue());
         }
         return map;
-    }
-
-    // ------------------------------------------------ 重複Kitの自動削除
-    private void removeDuplicateKits() {
-        ConfigurationSection kitsSec = config.getConfigurationSection("kits");
-        if (kitsSec == null) return;
-
-        Set<String> seenNames = new HashSet<>();
-        Set<String> seenSignatures = new HashSet<>();
-        List<String> toRemove = new ArrayList<>();
-
-        for (String id : new ArrayList<>(kitsSec.getKeys(false))) {
-            String path = "kits." + id;
-            String dispName = config.getString(path + ".name", id).trim().toLowerCase();
-            String signature = buildKitSignature(path);
-
-            if (!seenNames.add(dispName) || !seenSignatures.add(signature)) {
-                toRemove.add(id);
-            }
-        }
-
-        if (!toRemove.isEmpty()) {
-            for (String id : toRemove) {
-                config.set("kits." + id, null);
-                plugin.getLogger().info("[KitManager] 重複しているキットを自動削除しました: " + id);
-            }
-            save();
-        }
-    }
-
-    private String buildKitSignature(String path) {
-        StringBuilder sb = new StringBuilder();
-        for (String armor : List.of("helmet", "chestplate", "leggings", "boots")) {
-            ItemStack it = config.getItemStack(path + ".armor." + armor);
-            sb.append(armor).append("=").append(itemSig(it)).append(";");
-        }
-        sb.append("offhand=").append(itemSig(config.getItemStack(path + ".offhand"))).append(";");
-
-        ConfigurationSection slots = config.getConfigurationSection(path + ".slots");
-        if (slots != null) {
-            for (String key : slots.getKeys(false)) {
-                sb.append("s").append(key).append("=").append(itemSig(slots.getItemStack(key))).append(";");
-            }
-        }
-
-        ConfigurationSection effs = config.getConfigurationSection(path + ".effects");
-        if (effs != null) {
-            for (String key : effs.getKeys(false)) {
-                if (effs.isConfigurationSection(key)) {
-                    sb.append("e").append(key).append("=")
-                            .append(effs.getInt(key + ".level")).append(":")
-                            .append(effs.getInt(key + ".duration")).append(";");
-                } else {
-                    sb.append("e").append(key).append("=").append(effs.getInt(key)).append(";");
-                }
-            }
-        }
-        return sb.toString();
-    }
-
-    private String itemSig(ItemStack it) {
-        if (it == null || it.getType().isAir()) return "AIR";
-        return it.getType().name() + "x" + it.getAmount() + ":" + Objects.hashCode(it.getEnchantments());
     }
 
     // ------------------------------------------------ Kit制作エリア管理
@@ -522,11 +547,11 @@ public final class KitManager {
                 || type == PotionEffectType.JUMP_BOOST || type == PotionEffectType.RESISTANCE
                 || type == PotionEffectType.HASTE || type == PotionEffectType.FIRE_RESISTANCE
                 || type == PotionEffectType.NIGHT_VISION || type == PotionEffectType.INVISIBILITY) {
-            return 480;
+            return 480; // 8分
         }
-        if (type == PotionEffectType.SLOW_FALLING) return 240;
-        if (type == PotionEffectType.REGENERATION) return 90;
-        if (type == PotionEffectType.ABSORPTION) return 120;
+        if (type == PotionEffectType.SLOW_FALLING) return 240; // 4分
+        if (type == PotionEffectType.REGENERATION) return 90; // 1分30秒
+        if (type == PotionEffectType.ABSORPTION) return 120; // 2分
         if (type == PotionEffectType.GLOWING) return 30;
         return 480;
     }

@@ -115,6 +115,17 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         }
         switch (sub) {
             case "vote" -> {
+                // ★ /wars vote toggle (管理者限定: 投票アイテム配布の一時無効化/有効化)
+                if (a.length >= 2 && a[1].equalsIgnoreCase("toggle")) {
+                    if (!s.hasPermission("wars.admin") && !s.isOp()) {
+                        Msg.send(s, "&c権限がありません");
+                        return true;
+                    }
+                    boolean next = !VoteMenu.isVoteItemsEnabled();
+                    VoteMenu.setVoteItemsEnabled(plugin, next);
+                    Msg.send(s, "&e投票アイテムの配布状態: " + (next ? "&a有効 (配布中)" : "&c無効 (停止中)"));
+                    return true;
+                }
                 if (s instanceof Player p) VoteMenu.open(plugin, p);
             }
             case "top" -> top(s);
@@ -218,7 +229,14 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
 
         String sub = a[0].toLowerCase();
 
-        // ★ OP限定: Kit権限管理GUIの起動 (/kit perm)
+        // ★ /kit vote toggle (配布切り替え)
+        if (sub.equals("vote") && a.length >= 2 && a[1].equalsIgnoreCase("toggle")) {
+            boolean next = !VoteMenu.isVoteItemsEnabled();
+            VoteMenu.setVoteItemsEnabled(plugin, next);
+            Msg.send(p, "&e投票アイテムの配布状態: " + (next ? "&a有効 (配布中)" : "&c無効 (停止中)"));
+            return;
+        }
+
         if (sub.equals("perm")) {
             if (!p.isOp()) {
                 Msg.send(p, "&cこの機能はOP権限を持っているプレイヤーのみ利用できます");
@@ -226,14 +244,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 return;
             }
 
-            // 引数なしなら直接GUIを開く
-            if (a.length == 1) {
-                KitPermGui.open(plugin, p);
-                return;
-            }
-
-            String action = a[1].toLowerCase();
-            if (action.equals("list")) {
+            if (a.length == 1 || a[1].equalsIgnoreCase("list")) {
                 KitPermGui.open(plugin, p);
                 return;
             }
@@ -241,6 +252,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 Msg.send(p, "&c使用方法: /kit perm <add|remove> <player> <create|creative>");
                 return;
             }
+            String action = a[1].toLowerCase();
             String targetName = a[2];
             String type = a[3].toLowerCase();
             Player onlineTarget = Bukkit.getPlayerExact(targetName);
@@ -269,7 +281,6 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        // エリア設定
         if (sub.equals("area")) {
             if (a.length < 2) {
                 Msg.send(p, "&c/kit area <pos1|pos2|clear|info>");
@@ -342,6 +353,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         s.sendMessage(Msg.c("&7/wars top &f- 累計ポイントTOP10"));
         s.sendMessage(Msg.c("&7/wars points [name] &f- 累計ポイント"));
         if (s.hasPermission("wars.admin") || s.isOp()) {
+            s.sendMessage(Msg.c("&6[管理] &7/wars vote toggle &f- 投票アイテム配布の一時無効化/再開"));
             s.sendMessage(Msg.c("&6[管理] &7/kit &f- Kit一覧・管理GUI"));
             s.sendMessage(Msg.c("&6[管理] &7/kit area pos1|pos2|clear &f- Kit制作エリアの設定"));
             s.sendMessage(Msg.c("&6[管理] &7/kit perm &f- Kit権限管理GUI (OP限定)"));
@@ -585,6 +597,8 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         if (a.length == 1) {
             out.addAll(PUBLIC_SUBS);
             if (s.hasPermission("wars.admin") || s.isOp()) out.addAll(ADMIN_SUBS);
+        } else if (a.length == 2 && a[0].equalsIgnoreCase("vote") && (s.hasPermission("wars.admin") || s.isOp())) {
+            out.add("toggle");
         } else if (a[0].equalsIgnoreCase("kit")) {
             String[] kitArgs = Arrays.copyOfRange(a, 1, a.length);
             completeKitArgs(s, kitArgs, out);
@@ -615,7 +629,10 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
     private void completeKitArgs(CommandSender s, String[] kitArgs, List<String> out) {
         if (kitArgs.length == 1) {
             out.add("area");
+            out.add("vote");
             if (s.isOp()) out.add("perm");
+        } else if (kitArgs.length == 2 && kitArgs[0].equalsIgnoreCase("vote")) {
+            out.add("toggle");
         } else if (kitArgs.length == 2 && kitArgs[0].equalsIgnoreCase("area")) {
             out.addAll(List.of("pos1", "pos2", "clear", "info"));
         } else if (kitArgs.length == 2 && kitArgs[0].equalsIgnoreCase("perm") && s.isOp()) {
