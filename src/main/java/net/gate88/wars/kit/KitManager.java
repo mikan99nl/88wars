@@ -9,21 +9,21 @@ import net.gate88.wars.WarsPlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 
 public final class KitManager {
     private final WarsPlugin plugin;
     private File file;
     private YamlConfiguration config;
-    private String forcedKit = null; // 運営が指定したキット（null の場合はランダム）
+    private String forcedKit = null;
 
-    // Kit制作エリアの座標
     private String areaWorld;
     private int minX, minY, minZ;
     private int maxX, maxY, maxZ;
@@ -116,7 +116,6 @@ public final class KitManager {
         return hasArea;
     }
 
-    /** プレイヤーの位置がKit制作エリア内にあるかを判定 */
     public boolean isInKitArea(Location loc) {
         if (!hasArea || loc == null || loc.getWorld() == null) return false;
         if (!loc.getWorld().getName().equals(areaWorld)) return false;
@@ -214,6 +213,7 @@ public final class KitManager {
         save();
     }
 
+    /** プレイヤーにキットを適用（ポーション効果も付与） */
     public void applyKit(Player player, String kitId) {
         String path = "kits." + (kitId != null ? kitId.toLowerCase() : "");
         if (!config.contains(path)) {
@@ -245,6 +245,12 @@ public final class KitManager {
                     }
                 } catch (NumberFormatException ignored) {}
             }
+        }
+
+        // ★ 設定されたポーション効果をプレイヤーに付与（試合中持続: 600秒）
+        List<PotionEffect> effects = getKitEffects(kitId);
+        for (PotionEffect effect : effects) {
+            player.addPotionEffect(effect);
         }
 
         player.updateInventory();
@@ -329,5 +335,42 @@ public final class KitManager {
         }
 
         return new ItemStack(Material.CHEST);
+    }
+
+    // ------------------------------------------------ ポーション効果の管理
+    /** Kitに設定されているポーション効果一覧を取得 */
+    public List<PotionEffect> getKitEffects(String kitId) {
+        List<PotionEffect> list = new ArrayList<>();
+        String path = "kits." + kitId.toLowerCase() + ".effects";
+        ConfigurationSection sec = config.getConfigurationSection(path);
+        if (sec == null) return list;
+
+        for (String key : sec.getKeys(false)) {
+            PotionEffectType type = PotionEffectType.getByName(key.toUpperCase());
+            if (type != null) {
+                int level = sec.getInt(key); // 1 = Lv1 (amp 0), 2 = Lv2 (amp 1)
+                if (level > 0) {
+                    list.add(new PotionEffect(type, 20 * 600, level - 1)); // 10分間 (試合中持続)
+                }
+            }
+        }
+        return list;
+    }
+
+    /** Kitの特定ポーション効果のレベルを取得 (0 = なし, 1 = Lv1, 2 = Lv2) */
+    public int getEffectLevel(String kitId, PotionEffectType type) {
+        String path = "kits." + kitId.toLowerCase() + ".effects." + type.getName().toLowerCase();
+        return config.getInt(path, 0);
+    }
+
+    /** ポーション効果のレベルを設定 (0 = 解除, 1 = Lv1, 2 = Lv2) */
+    public void setEffectLevel(String kitId, PotionEffectType type, int level) {
+        String path = "kits." + kitId.toLowerCase() + ".effects." + type.getName().toLowerCase();
+        if (level <= 0) {
+            config.set(path, null);
+        } else {
+            config.set(path, level);
+        }
+        save();
     }
 }
