@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.util.Pos;
+import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 
 public final class ArenaManager {
@@ -32,11 +33,23 @@ public final class ArenaManager {
             arena.map = a.getString("map");
             arena.maxTeams = a.getInt("maxTeams", 0);
             arena.teamSize = a.getInt("teamSize", 0);
+
+            // ★ アリーナ個別時間設定の読み込み
+            arena.customTimingEnabled = a.getBoolean("customTimingEnabled", false);
+            arena.breakDelaySeconds = a.getInt("breakDelaySeconds", 0);
+            arena.customGraceSeconds = a.getInt("customGraceSeconds", 5);
+            arena.customDurationSeconds = a.getInt("customDurationSeconds", 0);
+            arena.customBlockDecaySeconds = a.getInt("customBlockDecaySeconds", 0);
+
+            for (String mName : a.getStringList("break-on-start")) {
+                Material m = Material.getMaterial(mName.toUpperCase());
+                if (m != null) arena.breakOnStart.add(m);
+            }
+
             for (String s : a.getStringList("spawns")) {
                 try {
                     arena.spawns.add(Pos.parse(s));
-                } catch (Exception ignored) {
-                }
+                } catch (Exception ignored) {}
             }
             arenas.put(id.toLowerCase(), arena);
         }
@@ -55,6 +68,18 @@ public final class ArenaManager {
             plugin.data().set(p + "map", a.map);
             plugin.data().set(p + "maxTeams", a.maxTeams);
             plugin.data().set(p + "teamSize", a.teamSize);
+
+            // ★ アリーナ個別時間設定の保存
+            plugin.data().set(p + "customTimingEnabled", a.customTimingEnabled);
+            plugin.data().set(p + "breakDelaySeconds", a.breakDelaySeconds);
+            plugin.data().set(p + "customGraceSeconds", a.customGraceSeconds);
+            plugin.data().set(p + "customDurationSeconds", a.customDurationSeconds);
+            plugin.data().set(p + "customBlockDecaySeconds", a.customBlockDecaySeconds);
+
+            List<String> bList = new ArrayList<>();
+            for (Material m : a.breakOnStart) bList.add(m.name());
+            plugin.data().set(p + "break-on-start", bList);
+
             List<String> sp = new ArrayList<>();
             for (Pos pos : a.spawns) sp.add(pos.serialize());
             plugin.data().set(p + "spawns", sp);

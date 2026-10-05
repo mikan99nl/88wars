@@ -1,8 +1,10 @@
 package net.gate88.wars.gui;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.util.Msg;
@@ -19,7 +21,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.SkullMeta;
 import org.jetbrains.annotations.NotNull;
 
-/** OP限定: Kit権限管理GUI (オフラインプレイヤー対応・閲覧・編集・削除) */
+/** OP限定: Kit権限管理GUI (OP所持者・オフラインプレイヤー対応) */
 public final class KitPermGui implements InventoryHolder {
     private final WarsPlugin plugin;
     private final Inventory inventory;
@@ -40,7 +42,6 @@ public final class KitPermGui implements InventoryHolder {
         return inventory;
     }
 
-    /** OPのみ開くことができる */
     public static void open(WarsPlugin plugin, Player player) {
         if (!player.isOp()) {
             Msg.send(player, "&cこの機能はOP権限を持っているプレイヤーのみ利用できます");
@@ -63,33 +64,48 @@ public final class KitPermGui implements InventoryHolder {
     private void renderList() {
         inventory.clear();
         Map<UUID, String> holders = plugin.kits().getAllPermHolders();
-        List<UUID> uuids = new ArrayList<>(holders.keySet());
+
+        // ★ OP所持者（オフライン含む）もすべて統合して一覧に表示
+        Set<UUID> allTargets = new LinkedHashSet<>();
+        for (OfflinePlayer opPlayer : Bukkit.getOperators()) {
+            allTargets.add(opPlayer.getUniqueId());
+        }
+        allTargets.addAll(holders.keySet());
+
+        List<UUID> uuids = new ArrayList<>(allTargets);
 
         for (int i = 0; i < Math.min(uuids.size(), 45); i++) {
             UUID uuid = uuids.get(i);
-            String name = holders.get(uuid);
             OfflinePlayer op = Bukkit.getOfflinePlayer(uuid);
+            String name = op.getName() != null ? op.getName() : holders.getOrDefault(uuid, "不明");
             boolean isOnline = op.isOnline();
+            boolean isOp = op.isOp();
 
-            boolean hasCreate = plugin.kits().hasCreatePerm(uuid);
-            boolean hasCreative = plugin.kits().hasCreativePerm(uuid);
+            boolean hasCreate = isOp || plugin.kits().hasCreatePerm(uuid);
+            boolean hasCreative = isOp || plugin.kits().hasCreativePerm(uuid);
 
             ItemStack skull = new ItemStack(Material.PLAYER_HEAD);
             SkullMeta meta = (SkullMeta) skull.getItemMeta();
             if (meta != null) {
                 meta.setOwningPlayer(op);
-                meta.displayName(Msg.c((isOnline ? "&a● " : "&8● ") + "&e&l" + (op.getName() != null ? op.getName() : name)));
+                meta.displayName(Msg.c((isOp ? "&c&l[OP] " : "") + (isOnline ? "&a● " : "&8● ") + "&e&l" + name));
 
                 List<net.kyori.adventure.text.Component> lore = new ArrayList<>();
                 lore.add(Msg.c(isOnline ? "&7ステータス: &aオンライン" : "&7ステータス: &8オフライン"));
                 lore.add(Msg.c("&8UUID: " + uuid));
                 lore.add(Msg.c(""));
-                lore.add(Msg.c("&fKit追加権限 (create): " + (hasCreate ? "&a【有効】" : "&c【無効】")));
-                lore.add(Msg.c("&f自動Creative権限 (creative): " + (hasCreative ? "&b【有効】" : "&c【無効】")));
-                lore.add(Msg.c(""));
-                lore.add(Msg.c("&e[左クリック] &fKit追加権限を切り替え"));
-                lore.add(Msg.c("&b[右クリック] &f自動Creative権限を切り替え"));
-                lore.add(Msg.c("&c[Qキー(ドロップ)] &fこのプレイヤーの権限を完全削除"));
+
+                if (isOp) {
+                    lore.add(Msg.c("&c★ サーバー管理者 (OP)"));
+                    lore.add(Msg.c("&7すべての権限が無条件で有効です"));
+                } else {
+                    lore.add(Msg.c("&fKit追加権限 (create): " + (hasCreate ? "&a【有効】" : "&c【無効】")));
+                    lore.add(Msg.c("&f自動Creative権限 (creative): " + (hasCreative ? "&b【有効】" : "&c【無効】")));
+                    lore.add(Msg.c(""));
+                    lore.add(Msg.c("&e[左クリック] &fKit追加権限を切り替え"));
+                    lore.add(Msg.c("&b[右クリック] &f自動Creative権限を切り替え"));
+                    lore.add(Msg.c("&c[Qキー(ドロップ)] &fこのプレイヤーの権限を完全削除"));
+                }
 
                 meta.lore(lore);
                 skull.setItemMeta(meta);
@@ -97,12 +113,11 @@ public final class KitPermGui implements InventoryHolder {
             inventory.setItem(i, skull);
         }
 
-        // 下部ボタン
         inventory.setItem(48, createItem(Material.EMERALD, "&a&l【オンラインプレイヤーに権限を付与】", List.of("&7サーバー内のプレイヤーを選んで権限を与えます")));
         inventory.setItem(49, createItem(Material.BOOK, "&e&l【権限の説明】", List.of(
+                "&c・OP所持者: &7常にすべての機能・クリエイティブが有効",
                 "&a・create: &7/createkit で新規Kitの追加のみ可能",
-                "&b・creative: &7Kit制作エリアに入った際自動でCreative化",
-                "&c・OP所持者: &7常にすべての操作・権限が有効です"
+                "&b・creative: &7Kit制作エリアに入った際自動でCreative化"
         )));
         inventory.setItem(53, createItem(Material.ARROW, "&c閉じる", List.of()));
     }
@@ -114,21 +129,26 @@ public final class KitPermGui implements InventoryHolder {
 
         for (int i = 0; i < Math.min(onlines.size(), 45); i++) {
             Player p = onlines.get(i);
-            boolean hasCreate = plugin.kits().hasCreatePerm(p.getUniqueId());
-            boolean hasCreative = plugin.kits().hasCreativePerm(p.getUniqueId());
+            boolean isOp = p.isOp();
+            boolean hasCreate = isOp || plugin.kits().hasCreatePerm(p.getUniqueId());
+            boolean hasCreative = isOp || plugin.kits().hasCreativePerm(p.getUniqueId());
 
             ItemStack skull = new ItemStack(Material.PLAYER_HEAD);
             SkullMeta meta = (SkullMeta) skull.getItemMeta();
             if (meta != null) {
                 meta.setOwningPlayer(p);
-                meta.displayName(Msg.c("&e&l" + p.getName()));
+                meta.displayName(Msg.c((isOp ? "&c&l[OP] " : "") + "&e&l" + p.getName()));
 
                 List<net.kyori.adventure.text.Component> lore = new ArrayList<>();
-                lore.add(Msg.c("&fKit追加権限: " + (hasCreate ? "&a有効" : "&c無効")));
-                lore.add(Msg.c("&f自動Creative権限: " + (hasCreative ? "&b有効" : "&c無効")));
-                lore.add(Msg.c(""));
-                lore.add(Msg.c("&e[左クリック] &fKit追加権限 (create) を付与"));
-                lore.add(Msg.c("&b[右クリック] &f自動Creative (creative) を付与"));
+                if (isOp) {
+                    lore.add(Msg.c("&c★ サーバー管理者 (OP) - 全権限有効"));
+                } else {
+                    lore.add(Msg.c("&fKit追加権限: " + (hasCreate ? "&a有効" : "&c無効")));
+                    lore.add(Msg.c("&f自動Creative権限: " + (hasCreative ? "&b有効" : "&c無効")));
+                    lore.add(Msg.c(""));
+                    lore.add(Msg.c("&e[左クリック] &fKit追加権限 (create) を付与"));
+                    lore.add(Msg.c("&b[右クリック] &f自動Creative (creative) を付与"));
+                }
 
                 meta.lore(lore);
                 skull.setItemMeta(meta);
@@ -156,13 +176,24 @@ public final class KitPermGui implements InventoryHolder {
 
     private void handleListClick(Player p, int slot, ClickType click) {
         Map<UUID, String> holders = plugin.kits().getAllPermHolders();
-        List<UUID> uuids = new ArrayList<>(holders.keySet());
+        Set<UUID> allTargets = new LinkedHashSet<>();
+        for (OfflinePlayer opPlayer : Bukkit.getOperators()) {
+            allTargets.add(opPlayer.getUniqueId());
+        }
+        allTargets.addAll(holders.keySet());
+        List<UUID> uuids = new ArrayList<>(allTargets);
 
         if (slot >= 0 && slot < uuids.size()) {
             UUID target = uuids.get(slot);
-            String name = holders.get(target);
+            OfflinePlayer targetOp = Bukkit.getOfflinePlayer(target);
+            String name = targetOp.getName() != null ? targetOp.getName() : holders.getOrDefault(target, "不明");
 
-            // Qキー (ドロップ): 完全削除
+            if (targetOp.isOp()) {
+                Msg.send(p, "&c" + name + " はOP所持者のため、個別の権限変更は不要です");
+                p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 0.6f, 0.8f);
+                return;
+            }
+
             if (click == ClickType.DROP || click == ClickType.CONTROL_DROP) {
                 plugin.kits().removeAllPerms(target);
                 p.playSound(p.getLocation(), Sound.ENTITY_ITEM_BREAK, 0.8f, 1.0f);
@@ -171,16 +202,13 @@ public final class KitPermGui implements InventoryHolder {
                 return;
             }
 
-            // 右クリック: creative 権限切り替え
             if (click.isRightClick()) {
                 boolean cur = plugin.kits().hasCreativePerm(target);
                 plugin.kits().setCreativePerm(target, name, !cur);
                 p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 0.6f, 1.2f);
                 Msg.send(p, "&e" + name + " &fの自動Creative権限: " + (!cur ? "&a付与" : "&c剥奪"));
                 renderList();
-            }
-            // 左クリック: create 権限切り替え
-            else {
+            } else {
                 boolean cur = plugin.kits().hasCreatePerm(target);
                 plugin.kits().setCreatePerm(target, name, !cur);
                 p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 0.6f, 1.2f);
@@ -199,6 +227,10 @@ public final class KitPermGui implements InventoryHolder {
 
         if (slot >= 0 && slot < onlines.size()) {
             Player target = onlines.get(slot);
+            if (target.isOp()) {
+                Msg.send(p, "&c" + target.getName() + " は既にOPを所持しています");
+                return;
+            }
             if (click.isRightClick()) {
                 plugin.kits().setCreativePerm(target.getUniqueId(), target.getName(), true);
                 Msg.send(p, "&a" + target.getName() + " に自動Creative権限を付与しました");

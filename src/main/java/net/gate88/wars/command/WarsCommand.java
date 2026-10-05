@@ -21,12 +21,14 @@ import net.gate88.wars.util.Pos;
 import net.gate88.wars.util.Sfx;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 
 public final class WarsCommand implements CommandExecutor, TabCompleter {
     private final WarsPlugin plugin;
@@ -44,7 +46,6 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(CommandSender s, Command cmd, String label, String[] a) {
         String cmdName = cmd.getName().toLowerCase();
 
-        // /kit コマンド
         if (cmdName.equals("kit")) {
             if (!s.hasPermission("wars.admin") && !s.isOp()) {
                 Msg.send(s, "&c権限がありません");
@@ -137,7 +138,6 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 String[] kitArgs = a.length > 1 ? Arrays.copyOfRange(a, 1, a.length) : new String[0];
                 handleKitCommand(p, kitArgs);
             }
-            // ★ /wars admin および /wars adomin の両方に対応
             case "admin", "adomin" -> {
                 if (s instanceof Player p) AdminGui.open(plugin, p, AdminGui.Page.MAIN);
                 else Msg.send(s, "ゲーム内で実行してください");
@@ -359,7 +359,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             s.sendMessage(Msg.c("&6[管理] &7/kit perm &f- Kit権限管理GUI (OP限定)"));
             s.sendMessage(Msg.c("&6[管理] &7/wars start [mode] &f- 強制開始 / /wars stop"));
             s.sendMessage(Msg.c("&6[管理] &7/wars setlobby | sethologram | setpodium <1-3>"));
-            s.sendMessage(Msg.c("&6[管理] &7/wars arena create|build|paste|addspawn|setspawn|setteams|setteamsize|enable|disable|delete|tp|list"));
+            s.sendMessage(Msg.c("&6[管理] &7/wars arena create|build|paste|addspawn|setspawn|setteams|setteamsize|addbreak|removebreak|clearbreak|enable|disable|delete|tp|list"));
             s.sendMessage(Msg.c("&6[管理] &7/wars map save <name> | list | delete <name>"));
             s.sendMessage(Msg.c("&6[管理] &7/wars setpoints|addpoints <player> <n> | reload"));
         }
@@ -387,7 +387,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
 
     private void arena(CommandSender s, String[] a) {
         if (a.length < 2) {
-            Msg.send(s, "&c/wars arena create <id> [mode] | build <id> | paste <id> <map> [mode] | addspawn <id> | setspawn <id> <team> | setteams <id> <n> | setteamsize <id> <n> | clearspawns <id> | enable <id> | disable <id> | delete <id> | tp <id> | list");
+            Msg.send(s, "&c/wars arena create|build|paste|addspawn|setspawn|setteams|setteamsize|addbreak|removebreak|clearbreak|enable|disable|delete|tp|list");
             return;
         }
         String op = a[1].toLowerCase();
@@ -396,6 +396,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 s.sendMessage(Msg.c((ar.isReady() ? "&a" : "&c") + ar.id + (ar.enabled ? "" : " &6[編集中]") + " &7mode=" + ar.modeId
                         + " world=" + ar.worldName + " center=" + ar.cx + "," + ar.cy + "," + ar.cz + " spawns=" + ar.spawns.size()
                         + " teams=" + (ar.maxTeams == 0 ? "auto" : ar.maxTeams) + " teamSize=" + (ar.teamSize == 0 ? "auto" : ar.teamSize)
+                        + " breakBlocks=" + ar.breakOnStart.size()
                         + (ar.map != null ? " map=" + ar.map : "")));
             }
             return;
@@ -582,6 +583,45 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 plugin.arenas().save();
                 Msg.send(s, "&aアリーナ &e" + ar.id + " &aの1チーム最大人数を &e" + (ar.teamSize == 0 ? "自動(モード準拠)" : ar.teamSize + "人") + " &aに設定しました");
             }
+            // ★ 手持ちブロックを開始時自動破壊対象に追加
+            case "addbreak" -> {
+                Arena ar = plugin.arenas().get(id);
+                if (ar == null || p == null) return;
+                ItemStack hand = p.getInventory().getItemInMainHand();
+                if (hand.getType().isAir() || !hand.getType().isBlock()) {
+                    Msg.send(p, "&c破壊対象にしたいブロックを手に持ってください");
+                    return;
+                }
+                ar.addBreakBlock(hand.getType());
+                plugin.arenas().save();
+                Msg.send(p, "&aアリーナ &e" + ar.id + " &aの開始時自動破壊ブロックに &b" + hand.getType().name() + " &aを追加しました！");
+                Sfx.success(p);
+            }
+            // ★ 手持ちブロックを開始時自動破壊対象から解除
+            case "removebreak" -> {
+                Arena ar = plugin.arenas().get(id);
+                if (ar == null || p == null) return;
+                ItemStack hand = p.getInventory().getItemInMainHand();
+                if (hand.getType().isAir()) {
+                    Msg.send(p, "&c解除したいブロックを手に持ってください");
+                    return;
+                }
+                if (ar.removeBreakBlock(hand.getType())) {
+                    plugin.arenas().save();
+                    Msg.send(p, "&eアリーナ &f" + ar.id + " &eの開始時自動破壊ブロックから &b" + hand.getType().name() + " &eを解除しました");
+                    Sfx.success(p);
+                } else {
+                    Msg.send(p, "&cそのブロックは登録されていません");
+                }
+            }
+            // ★ 開始時自動破壊ブロックの全消去
+            case "clearbreak" -> {
+                Arena ar = plugin.arenas().get(id);
+                if (ar == null) return;
+                ar.clearBreakBlocks();
+                plugin.arenas().save();
+                Msg.send(s, "&eアリーナ &f" + ar.id + " &eの開始時自動破壊ブロックを全消去しました");
+            }
             case "clearspawns" -> {
                 Arena ar = plugin.arenas().get(id);
                 if (ar == null) return;
@@ -667,7 +707,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             String[] kitArgs = Arrays.copyOfRange(a, 1, a.length);
             completeKitArgs(s, kitArgs, out);
         } else if (a.length == 2 && a[0].equalsIgnoreCase("arena")) {
-            out.addAll(List.of("create", "build", "paste", "addspawn", "setspawn", "setteams", "setteamsize", "clearspawns", "enable", "disable", "delete", "tp", "list"));
+            out.addAll(List.of("create", "build", "paste", "addspawn", "setspawn", "setteams", "setteamsize", "addbreak", "removebreak", "clearbreak", "clearspawns", "enable", "disable", "delete", "tp", "list"));
         } else if (a.length == 2 && a[0].equalsIgnoreCase("map")) {
             out.addAll(List.of("save", "list", "delete"));
         } else if (a.length == 3 && a[0].equalsIgnoreCase("map") && a[1].equalsIgnoreCase("delete")) {

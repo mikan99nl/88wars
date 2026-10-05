@@ -25,10 +25,12 @@ import org.bukkit.Color;
 import org.bukkit.DyeColor;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.scheduler.BukkitTask;
@@ -58,6 +60,10 @@ public final class Match {
     private boolean aborted;
     private final List<org.bukkit.entity.Entity> tracked = new ArrayList<>();
 
+    // ★ ブロック破壊とアイテム配布の時系列管理
+    private boolean blocksBroken = false;
+    private int breakAtElapsed = 0;
+
     public Match(WarsPlugin plugin, WarsMode mode, Arena arena, List<Player> participants) {
         this.plugin = plugin;
         this.mode = mode;
@@ -69,7 +75,6 @@ public final class Match {
         List<Player> list = new ArrayList<>(participants);
         Collections.shuffle(list);
 
-        // ★ アリーナで指定されたチーム数・チームサイズを最優先 (未設定0ならモード設定)
         int count = arena.maxTeams > 0 ? arena.maxTeams : mode.teamCount();
         int size = arena.teamSize > 0 ? arena.teamSize : mode.teamSize();
 
@@ -128,8 +133,12 @@ public final class Match {
         return n;
     }
 
+    public int matchDuration() {
+        return arena.getDurationSeconds(mode.durationSeconds());
+    }
+
     public int timeLeft() {
-        return Math.max(0, mode.durationSeconds() - elapsed);
+        return Math.max(0, matchDuration() - elapsed);
     }
 
     public double borderRadius() {
@@ -146,7 +155,16 @@ public final class Match {
         plugin.clearTrackedTridents();
         cleanWorldEntities();
 
-        // ★ チーム番号に対応したスポーン地点に確実にテレポート（シャッフルなし）
+        // 壊れるまでの秒数が0の場合は開始と同時に即座に破壊
+        int breakDelay = arena.getBreakDelay();
+        if (breakDelay <= 0) {
+            breakConfiguredArenaBlocks();
+            blocksBroken = true;
+            breakAtElapsed = 0;
+        } else {
+            blocksBroken = false;
+        }
+
         for (MatchTeam t : teams) {
             Pos sp = !arena.spawns.isEmpty()
                     ? arena.spawns.get(t.index % arena.spawns.size())
@@ -158,7 +176,6 @@ public final class Match {
                 if (p == null) continue;
                 prepare(p);
 
-                // チームメンバーが複数人いる場合は重ならないよう少しずらす
                 Location spawnLoc = sp.toLocation(world);
                 if (idx > 0) {
                     spawnLoc.add((idx % 3) - 1.0, 0, (idx / 3) * 1.0);
@@ -166,7 +183,11 @@ public final class Match {
                 p.teleport(spawnLoc);
                 idx++;
 
-                Msg.title(p, "&e&l" + mode.displayName, "&7" + mode.graceSeconds() + "秒後に装備が配布されます", 5, 50, 10);
+                String subMsg = (breakDelay > 0)
+                        ? "&7" + breakDelay + "秒後にブロックが開放されます"
+                        : "&7" + arena.getGraceSeconds(mode.graceSeconds()) + "秒後に装備が配布されます";
+
+                Msg.title(p, "&e&l" + mode.displayName, subMsg, 5, 50, 10);
                 p.playSound(p.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 0.4f, 1.2f);
                 Msg.send(p, "あなたの色: " + Colors.code(t.color) + "&l" + Colors.en(t.color));
             }
@@ -192,6 +213,26 @@ public final class Match {
         }
     }
 
+    private void breakConfiguredArenaBlocks() {
+        if (arena.breakOnStart.isEmpty() || world == null) return;
+        int r = 35;
+        int minY = Math.max(world.getMinHeight(), arena.cy - 10);
+        int maxY = Math.min(world.getMaxHeight(), arena.cy + 30);
+
+        for (int x = arena.cx - r; x <= arena.cx + r; x++) {
+            for (int z = arena.cz - r; z <= arena.cz + r; z++) {
+                for (int y = minY; y <= maxY; y++) {
+                    Block b = world.getBlockAt(x, y, z);
+                    if (arena.breakOnStart.contains(b.getType())) {
+                        blocks.trackFixed(b, b.getState());
+                        world.spawnParticle(Particle.BLOCK, b.getLocation().add(0.5, 0.5, 0.5), 6, 0.2, 0.2, 0.2, b.getBlockData());
+                        b.setType(Material.AIR, false);
+                    }
+                }
+            }
+        }
+    }
+
     public static void prepare(Player p) {
         p.setGameMode(GameMode.SURVIVAL);
         p.getInventory().clear();
@@ -209,26 +250,59 @@ public final class Match {
         p.setInvulnerable(false);
     }
 
-    // ------------------------------------------------------------ tick
+    // ------------------------------------------------------------ tick (ブロック破壊＆アイテム配布の時系列進行)
     private void tick() {
         if (isOver()) return;
         elapsed++;
 
         if (state == State.PREPARING) {
-            int remain = mode.graceSeconds() - elapsed;
-            if (remain <= 0) {
-                state = State.RUNNING;
-                mode.onGraceEnd(this);
-            } else {
-                for (MatchPlayer mp : players.values()) {
-                    Player p = mp.player();
-                    if (p == null || mp.left) continue;
-                    Msg.actionBar(p, "&e装備配布まで &c" + remain + " &e秒 &7(それまでPvP無効)");
-                    p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 0.6f, 1.0f + (5 - remain) * 0.1f);
+            int breakDelay = arena.getBreakDelay();
+            int graceAfterBreak = arena.getGraceSeconds(mode.graceSeconds());
+
+            // フェーズ 1: 開始〜ブロック破壊まで
+            if (!blocksBroken) {
+                int breakRemain = breakDelay - elapsed;
+                if (breakRemain > 0) {
+                    for (MatchPlayer mp : players.values()) {
+                        Player p = mp.player();
+                        if (p == null || mp.left) continue;
+                        Msg.actionBar(p, "&cブロック開放まで &e" + breakRemain + " &c秒");
+                        p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 0.6f, 1.0f + (breakDelay - breakRemain) * 0.1f);
+                    }
+                } else {
+                    // ★ 時間到達でブロック破壊を実行！
+                    breakConfiguredArenaBlocks();
+                    blocksBroken = true;
+                    breakAtElapsed = elapsed;
+
+                    playAll(Sound.BLOCK_BEACON_ACTIVATE, 1.0f, 1.2f);
+                    broadcastToMatch("&a&lブロックが開放されました！");
+
+                    // 破壊後の待機が0秒なら即座にアイテム配布
+                    if (graceAfterBreak <= 0) {
+                        state = State.RUNNING;
+                        mode.onGraceEnd(this);
+                    }
+                }
+            }
+            // フェーズ 2: ブロック破壊後〜アイテム配布まで
+            else {
+                int graceRemain = graceAfterBreak - (elapsed - breakAtElapsed);
+                if (graceRemain <= 0) {
+                    state = State.RUNNING;
+                    mode.onGraceEnd(this); // ★ 装備・アイテム配布＆PvP解禁
+                } else {
+                    for (MatchPlayer mp : players.values()) {
+                        Player p = mp.player();
+                        if (p == null || mp.left) continue;
+                        Msg.actionBar(p, "&e装備配布まで &c" + graceRemain + " &e秒 &7(それまでPvP無効)");
+                        p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 0.6f, 1.0f + (graceAfterBreak - graceRemain) * 0.1f);
+                    }
                 }
             }
         }
 
+        // 継続ポイント(生存)
         int interval = Math.max(1, plugin.getConfig().getInt("points.survival-interval-seconds", 5));
         int survPts = plugin.getConfig().getInt("points.survival", 1);
         for (MatchPlayer mp : players.values()) {
@@ -242,7 +316,7 @@ public final class Match {
         mode.onSecond(this);
         if (isOver()) return;
 
-        if (elapsed >= mode.durationSeconds()) {
+        if (elapsed >= matchDuration()) {
             finish(mode.pickTimeUpWinner(this), "時間切れ");
             return;
         }

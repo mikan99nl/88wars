@@ -16,15 +16,19 @@ import net.gate88.wars.util.Msg;
 import net.gate88.wars.util.Sfx;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
@@ -93,14 +97,12 @@ public final class RandomizerMode extends WarsMode {
         selectedKitName = null;
         warned.clear();
 
-        // ★ 中央 5x5 の制圧地点に初期ブロックとして「白色のコンクリート」を敷き詰める
         if (fill()) {
             Arena a = m.arena();
             World w = m.world();
             for (int dx = -HALF; dx <= HALF; dx++) {
                 for (int dz = -HALF; dz <= HALF; dz++) {
                     Block b = w.getBlockAt(a.cx + dx, a.cy, a.cz + dz);
-                    // 元のブロックを原状復帰に登録
                     m.blocks().trackFixed(b, b.getState());
                     b.setType(Material.WHITE_CONCRETE, false);
                 }
@@ -141,7 +143,6 @@ public final class RandomizerMode extends WarsMode {
         }
     }
 
-    /** 羊毛、ハサミ、革防具染色、および白色コンクリート破壊用ツルハシの配布 */
     private void applyWarsExtras(Player p, MatchTeam team, int stacks) {
         PlayerInventory inv = p.getInventory();
 
@@ -153,22 +154,30 @@ public final class RandomizerMode extends WarsMode {
             }
         }
 
-        // ハサミと羊毛を付与
         inv.addItem(new ItemStack(Material.SHEARS));
         for (int i = 0; i < stacks; i++) {
             inv.addItem(new ItemStack(Colors.wool(team.color), 64));
         }
 
-        // ★ 白色コンクリートを素早く掘れる専用ツルハシ（効率強化III・耐久無限）を配布
+        // ★ 鉄のツルハシ (効率強化3・攻撃力1・耐久無限) を配布
         if (fill()) {
-            ItemStack pickaxe = new ItemStack(Material.DIAMOND_PICKAXE);
+            ItemStack pickaxe = new ItemStack(Material.IRON_PICKAXE);
             ItemMeta pmeta = pickaxe.getItemMeta();
             if (pmeta != null) {
                 pmeta.displayName(Msg.c("&b&l中央コンクリート破壊用ツルハシ"));
-                pmeta.lore(List.of(Msg.c("&7中央の白色コンクリートを破壊できます")));
+                pmeta.lore(List.of(Msg.c("&7中央の白色コンクリートを破壊できます (攻撃力: 1)")));
                 pmeta.addEnchant(Enchantment.EFFICIENCY, 3, true);
                 pmeta.setUnbreakable(true);
-                pmeta.addItemFlags(ItemFlag.HIDE_ENCHANTS, ItemFlag.HIDE_UNBREAKABLE);
+
+                // ★ 攻撃力を1に固定 (基礎攻撃力1.0 + 0.0)
+                AttributeModifier attackMod = new AttributeModifier(
+                        new NamespacedKey(plugin, "pickaxe_attack"),
+                        0.0,
+                        AttributeModifier.Operation.ADD_NUMBER,
+                        EquipmentSlotGroup.MAINHAND
+                );
+                pmeta.addAttributeModifier(Attribute.ATTACK_DAMAGE, attackMod);
+                pmeta.addItemFlags(ItemFlag.HIDE_ENCHANTS, ItemFlag.HIDE_UNBREAKABLE, ItemFlag.HIDE_ATTRIBUTES);
                 pickaxe.setItemMeta(pmeta);
             }
             inv.addItem(pickaxe);
@@ -195,7 +204,6 @@ public final class RandomizerMode extends WarsMode {
     @Override
     public boolean canPlace(Match m, MatchPlayer p, Block b) {
         if (!fill()) return true;
-        // 中央エリアより上にはブロックを設置させない
         if (inFootprint(m.arena(), b) && b.getY() != m.arena().cy) {
             Player pl = p.player();
             if (pl != null) {
@@ -226,7 +234,7 @@ public final class RandomizerMode extends WarsMode {
             for (MatchPlayer mp : m.allPlayers()) {
                 Player pl = mp.player();
                 if (pl == null || mp.left) continue;
-                Msg.actionBar(pl, Colors.code(p.team.color) + p.team.label() + " &cが制圧目前! (" + n + "/" + CELLS + ")");
+                Msg.actionBar(pl, Colors.code(p.team.color) + "&l" + Colors.en(p.team.color) + " &f" + p.team.label() + " &cが制圧目前! (" + n + "/" + CELLS + ")");
                 pl.playSound(pl.getLocation(), Sound.BLOCK_BELL_USE, 1.0f, 1.0f);
             }
         }

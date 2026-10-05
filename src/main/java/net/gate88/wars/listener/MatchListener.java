@@ -97,7 +97,8 @@ public final class MatchListener implements Listener {
         }
 
         boolean exempt = m.mode().decayExempt(m, placedBlock);
-        int sec = m.mode().blockDecaySeconds();
+        // ★ アリーナ設定が優先される崩壊秒数
+        int sec = m.arena().getBlockDecaySeconds(m.mode().blockDecaySeconds());
         m.blocks().track(placedBlock, placedBlock.getState(), !exempt && sec > 0, sec);
     }
 
@@ -114,7 +115,6 @@ public final class MatchListener implements Listener {
         m.blocks().trackFixed(block, block.getState());
     }
 
-    /** ★ 水や溶岩が周囲に流れ広がったブロックを自動追跡して消滅可能にする */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onFluidFlow(BlockFromToEvent e) {
         Match m = plugin.match();
@@ -204,7 +204,8 @@ public final class MatchListener implements Listener {
             return;
         }
         boolean exempt = m.mode().decayExempt(m, e.getBlockPlaced());
-        int sec = m.mode().blockDecaySeconds();
+        // ★ アリーナ設定優先の崩壊秒数
+        int sec = m.arena().getBlockDecaySeconds(m.mode().blockDecaySeconds());
         m.blocks().track(e.getBlockPlaced(), e.getBlockReplacedState(), !exempt && sec > 0, sec);
         m.mode().onBlockPlaced(m, v, e.getBlockPlaced());
     }
@@ -219,7 +220,6 @@ public final class MatchListener implements Listener {
             return;
         }
 
-        // モード側で破壊を許可しているか確認（中央の白色コンクリートなど）
         if (!m.mode().canPlace(m, v, e.getBlock()) && !m.blocks().isActive(e.getBlock())) {
             e.setCancelled(true);
             return;
