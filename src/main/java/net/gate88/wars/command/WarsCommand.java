@@ -17,6 +17,7 @@ import net.gate88.wars.gui.VoteMenu;
 import net.gate88.wars.mode.WarsMode;
 import net.gate88.wars.points.PointsManager;
 import net.gate88.wars.util.Msg;
+import net.gate88.wars.util.Pos;
 import net.gate88.wars.util.Sfx;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -35,7 +36,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         this.plugin = plugin;
     }
 
-    private static final List<String> ADMIN_SUBS = List.of("admin", "kit", "start", "stop", "setlobby", "sethologram",
+    private static final List<String> ADMIN_SUBS = List.of("admin", "adomin", "kit", "start", "stop", "setlobby", "sethologram",
             "setpodium", "arena", "map", "setpoints", "addpoints", "reload");
     private static final List<String> PUBLIC_SUBS = List.of("help", "vote", "top", "points");
 
@@ -75,7 +76,6 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        // /createkit コマンド
         if (cmdName.equals("createkit")) {
             if (!(s instanceof Player p)) {
                 Msg.send(s, "ゲーム内で実行してください");
@@ -109,13 +109,12 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         String sub = a[0].toLowerCase();
-        if (ADMIN_SUBS.contains(sub) && !s.hasPermission("wars.admin")) {
+        if (ADMIN_SUBS.contains(sub) && !s.hasPermission("wars.admin") && !s.isOp()) {
             Msg.send(s, "&c権限がありません");
             return true;
         }
         switch (sub) {
             case "vote" -> {
-                // ★ /wars vote toggle (管理者限定: 投票アイテム配布の一時無効化/有効化)
                 if (a.length >= 2 && a[1].equalsIgnoreCase("toggle")) {
                     if (!s.hasPermission("wars.admin") && !s.isOp()) {
                         Msg.send(s, "&c権限がありません");
@@ -138,7 +137,8 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 String[] kitArgs = a.length > 1 ? Arrays.copyOfRange(a, 1, a.length) : new String[0];
                 handleKitCommand(p, kitArgs);
             }
-            case "admin" -> {
+            // ★ /wars admin および /wars adomin の両方に対応
+            case "admin", "adomin" -> {
                 if (s instanceof Player p) AdminGui.open(plugin, p, AdminGui.Page.MAIN);
                 else Msg.send(s, "ゲーム内で実行してください");
             }
@@ -229,7 +229,6 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
 
         String sub = a[0].toLowerCase();
 
-        // ★ /kit vote toggle (配布切り替え)
         if (sub.equals("vote") && a.length >= 2 && a[1].equalsIgnoreCase("toggle")) {
             boolean next = !VoteMenu.isVoteItemsEnabled();
             VoteMenu.setVoteItemsEnabled(plugin, next);
@@ -353,14 +352,14 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         s.sendMessage(Msg.c("&7/wars top &f- 累計ポイントTOP10"));
         s.sendMessage(Msg.c("&7/wars points [name] &f- 累計ポイント"));
         if (s.hasPermission("wars.admin") || s.isOp()) {
+            s.sendMessage(Msg.c("&6[管理] &7/wars admin &f- 総合管理ダッシュボードGUI"));
             s.sendMessage(Msg.c("&6[管理] &7/wars vote toggle &f- 投票アイテム配布の一時無効化/再開"));
             s.sendMessage(Msg.c("&6[管理] &7/kit &f- Kit一覧・管理GUI"));
             s.sendMessage(Msg.c("&6[管理] &7/kit area pos1|pos2|clear &f- Kit制作エリアの設定"));
             s.sendMessage(Msg.c("&6[管理] &7/kit perm &f- Kit権限管理GUI (OP限定)"));
-            s.sendMessage(Msg.c("&6[管理] &7/wars admin &f- 設定GUI"));
             s.sendMessage(Msg.c("&6[管理] &7/wars start [mode] &f- 強制開始 / /wars stop"));
             s.sendMessage(Msg.c("&6[管理] &7/wars setlobby | sethologram | setpodium <1-3>"));
-            s.sendMessage(Msg.c("&6[管理] &7/wars arena create|build|paste|addspawn|clearspawns|enable|disable|delete|tp|list"));
+            s.sendMessage(Msg.c("&6[管理] &7/wars arena create|build|paste|addspawn|setspawn|setteams|setteamsize|enable|disable|delete|tp|list"));
             s.sendMessage(Msg.c("&6[管理] &7/wars map save <name> | list | delete <name>"));
             s.sendMessage(Msg.c("&6[管理] &7/wars setpoints|addpoints <player> <n> | reload"));
         }
@@ -388,8 +387,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
 
     private void arena(CommandSender s, String[] a) {
         if (a.length < 2) {
-            Msg.send(s, "&c/wars arena create <id> [mode] | build <id> | paste <id> <map> [mode] | addspawn <id> | clearspawns <id>"
-                    + " | enable <id> | disable <id> | delete <id> | tp <id> | list");
+            Msg.send(s, "&c/wars arena create <id> [mode] | build <id> | paste <id> <map> [mode] | addspawn <id> | setspawn <id> <team> | setteams <id> <n> | setteamsize <id> <n> | clearspawns <id> | enable <id> | disable <id> | delete <id> | tp <id> | list");
             return;
         }
         String op = a[1].toLowerCase();
@@ -397,6 +395,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             for (Arena ar : plugin.arenas().all()) {
                 s.sendMessage(Msg.c((ar.isReady() ? "&a" : "&c") + ar.id + (ar.enabled ? "" : " &6[編集中]") + " &7mode=" + ar.modeId
                         + " world=" + ar.worldName + " center=" + ar.cx + "," + ar.cy + "," + ar.cz + " spawns=" + ar.spawns.size()
+                        + " teams=" + (ar.maxTeams == 0 ? "auto" : ar.maxTeams) + " teamSize=" + (ar.teamSize == 0 ? "auto" : ar.teamSize)
                         + (ar.map != null ? " map=" + ar.map : "")));
             }
             return;
@@ -518,6 +517,71 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 plugin.maps().storeSpawns(ar);
                 Msg.send(s, "&aスポーン追加 (" + ar.spawns.size() + ")");
             }
+            case "setspawn" -> {
+                Arena ar = plugin.arenas().get(id);
+                if (ar == null || p == null) return;
+                if (a.length < 4) {
+                    Msg.send(s, "&c使用方法: /wars arena setspawn <id> <チーム番号 1〜N>");
+                    return;
+                }
+                int idx;
+                try {
+                    idx = Integer.parseInt(a[3]);
+                } catch (NumberFormatException ex) {
+                    Msg.send(s, "&c数値を指定してください (1〜N)");
+                    return;
+                }
+                if (idx < 1) {
+                    Msg.send(s, "&cチーム番号は 1 以上で指定してください");
+                    return;
+                }
+                ar.setSpawn(idx - 1, Pos.of(p.getLocation()));
+                plugin.arenas().save();
+                plugin.maps().storeSpawns(ar);
+                Msg.send(s, "&aアリーナ &e" + ar.id + " &aの &6チーム " + idx + " &a専用スポーン地点を設定しました！");
+            }
+            case "setteams" -> {
+                Arena ar = plugin.arenas().get(id);
+                if (ar == null) {
+                    Msg.send(s, "&cアリーナが見つかりません");
+                    return;
+                }
+                if (a.length < 4) {
+                    Msg.send(s, "&c使用方法: /wars arena setteams <id> <チーム数 (0で自動/モード準拠)>");
+                    return;
+                }
+                int n;
+                try {
+                    n = Integer.parseInt(a[3]);
+                } catch (NumberFormatException ex) {
+                    Msg.send(s, "&c数値を指定してください");
+                    return;
+                }
+                ar.maxTeams = Math.max(0, n);
+                plugin.arenas().save();
+                Msg.send(s, "&aアリーナ &e" + ar.id + " &aの最大チーム数を &e" + (ar.maxTeams == 0 ? "自動(モード準拠)" : ar.maxTeams + "チーム") + " &aに設定しました");
+            }
+            case "setteamsize" -> {
+                Arena ar = plugin.arenas().get(id);
+                if (ar == null) {
+                    Msg.send(s, "&cアリーナが見つかりません");
+                    return;
+                }
+                if (a.length < 4) {
+                    Msg.send(s, "&c使用方法: /wars arena setteamsize <id> <人数 (0で自動/モード準拠)>");
+                    return;
+                }
+                int n;
+                try {
+                    n = Integer.parseInt(a[3]);
+                } catch (NumberFormatException ex) {
+                    Msg.send(s, "&c数値を指定してください");
+                    return;
+                }
+                ar.teamSize = Math.max(0, n);
+                plugin.arenas().save();
+                Msg.send(s, "&aアリーナ &e" + ar.id + " &aの1チーム最大人数を &e" + (ar.teamSize == 0 ? "自動(モード準拠)" : ar.teamSize + "人") + " &aに設定しました");
+            }
             case "clearspawns" -> {
                 Arena ar = plugin.arenas().get(id);
                 if (ar == null) return;
@@ -603,7 +667,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             String[] kitArgs = Arrays.copyOfRange(a, 1, a.length);
             completeKitArgs(s, kitArgs, out);
         } else if (a.length == 2 && a[0].equalsIgnoreCase("arena")) {
-            out.addAll(List.of("create", "build", "paste", "addspawn", "clearspawns", "enable", "disable", "delete", "tp", "list"));
+            out.addAll(List.of("create", "build", "paste", "addspawn", "setspawn", "setteams", "setteamsize", "clearspawns", "enable", "disable", "delete", "tp", "list"));
         } else if (a.length == 2 && a[0].equalsIgnoreCase("map")) {
             out.addAll(List.of("save", "list", "delete"));
         } else if (a.length == 3 && a[0].equalsIgnoreCase("map") && a[1].equalsIgnoreCase("delete")) {

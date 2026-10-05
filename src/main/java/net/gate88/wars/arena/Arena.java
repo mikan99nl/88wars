@@ -22,6 +22,11 @@ public final class Arena {
     /** 貼り付け元のマップ名 (maps/<name>.schem)。自動生成アリーナは null */
     public String map;
 
+    /** 0 = モード設定準拠 / 1以上 = アリーナ個別の最大チーム数 */
+    public int maxTeams = 0;
+    /** 0 = モード設定準拠 / 1以上 = 1チームあたりの最大人数 */
+    public int teamSize = 0;
+
     public Arena(String id, String modeId) {
         this.id = id;
         this.modeId = modeId;
@@ -38,5 +43,13 @@ public final class Arena {
 
     public boolean isReady() {
         return enabled && world() != null && modeId != null && !spawns.isEmpty();
+    }
+
+    /** チーム番号 (0〜N) に応じたスポーン地点を設定 */
+    public void setSpawn(int teamIndex, Pos pos) {
+        while (spawns.size() <= teamIndex) {
+            spawns.add(pos);
+        }
+        spawns.set(teamIndex, pos);
     }
 }

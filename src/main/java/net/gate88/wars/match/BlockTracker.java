@@ -8,6 +8,7 @@ import java.util.UUID;
 import net.gate88.wars.WarsPlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.block.Block;
@@ -15,7 +16,7 @@ import org.bukkit.block.BlockState;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
 
-/** プレイヤー設置ブロックの管理 (ヒビ割れを伴う段階的崩壊 / 試合終了時に原状復帰) */
+/** プレイヤー設置ブロックおよび水流の管理 (ヒビ割れ崩壊 / 試合終了時に原状復帰) */
 public final class BlockTracker {
     private record Key(UUID world, int x, int y, int z) {
         static Key of(Block b) {
@@ -27,6 +28,8 @@ public final class BlockTracker {
     private final Set<Key> active = new HashSet<>();
     private final Map<Key, BlockState> originals = new HashMap<>();
     private final Map<Key, BukkitTask> tasks = new HashMap<>();
+    // 水流・溶岩流として広がったブロックの記録
+    private final Set<Key> fluidBlocks = new HashSet<>();
 
     public BlockTracker(WarsPlugin plugin) {
         this.plugin = plugin;
@@ -47,7 +50,7 @@ public final class BlockTracker {
 
         if (decay && seconds > 0) {
             final int totalTicks = seconds * 20;
-            final int intervalTicks = 5; // 0.25秒ごとに滑らかにヒビ割れを更新
+            final int intervalTicks = 5;
             final int[] elapsed = {0};
             final int sourceId = Math.abs(k.hashCode());
 
@@ -59,11 +62,9 @@ public final class BlockTracker {
                     return;
                 }
 
-                // ヒビ割れ進行度: 0.0f (無傷) ～ 0.99f (最大ヒビ割れ)
                 float progress = Math.min(0.99f, (float) elapsed[0] / totalTicks);
                 sendCrack(k, progress, sourceId);
 
-                // 崩壊直前（残り1.5秒以内）の予兆演出（ヒビ音 & 破片パーティクル）
                 int remainingTicks = totalTicks - elapsed[0];
                 if (remainingTicks <= 30 && elapsed[0] % 10 == 0) {
                     World w = Bukkit.getWorld(k.world());
@@ -80,7 +81,14 @@ public final class BlockTracker {
         }
     }
 
-    /** 壊せない・消えないブロック(遺品チェスト等)。試合終了時に原状復帰だけする */
+    /** 流れ出た水・溶岩ブロックを記録 */
+    public void trackFluid(Block b, BlockState original) {
+        Key k = Key.of(b);
+        originals.putIfAbsent(k, original);
+        fluidBlocks.add(k);
+    }
+
+    /** 固定ブロック(遺品チェスト・中央の白色コンクリートなど)。原状復帰だけ行う */
     public void trackFixed(Block b, BlockState replaced) {
         originals.putIfAbsent(Key.of(b), replaced);
     }
@@ -102,23 +110,64 @@ public final class BlockTracker {
         World w = Bukkit.getWorld(k.world());
         if (w == null) return;
         Block b = w.getBlockAt(k.x(), k.y(), k.z());
+
         if (!b.getType().isAir()) {
             Location center = b.getLocation().add(0.5, 0.5, 0.5);
-            // 素材に合わせた破片パーティクルと破壊音を再生
             w.spawnParticle(Particle.BLOCK, center, 18, 0.3, 0.3, 0.3, b.getBlockData());
             w.playSound(b.getLocation(), b.getBlockData().getSoundGroup().getBreakSound(), 0.8f, 1.0f);
         }
+
+        // 水源・溶岩が消える場合、周囲に広がる水流も消滅を促す
+        boolean isLiquid = b.isLiquid();
+
         BlockState orig = originals.get(k);
-        if (orig != null) orig.update(true, false);
-        else b.setType(org.bukkit.Material.AIR, false);
+        if (orig != null) orig.update(true, true);
+        else b.setType(Material.AIR, true);
+
+        if (isLiquid) {
+            clearAdjacentFlowingWater(b);
+        }
     }
 
+    /** 周囲の水流をきれいに消去 */
+    private void clearAdjacentFlowingWater(Block center) {
+        int[] dx = {-1, 1, 0, 0, 0, 0};
+        int[] dy = {0, 0, -1, 1, 0, 0};
+        int[] dz = {0, 0, 0, 0, -1, 1};
+
+        for (int i = 0; i < 6; i++) {
+            Block adj = center.getRelative(dx[i], dy[i], dz[i]);
+            if (adj.isLiquid()) {
+                Key ak = Key.of(adj);
+                if (fluidBlocks.contains(ak) || active.contains(ak)) {
+                    BlockState s = originals.get(ak);
+                    if (s != null) s.update(true, true);
+                    else adj.setType(Material.AIR, true);
+                }
+            }
+        }
+    }
+
+    /** 試合終了時: 広がった水流も含めて完全リセット */
     public void restoreAll() {
         for (Map.Entry<Key, BukkitTask> entry : tasks.entrySet()) {
             entry.getValue().cancel();
             clearCrack(entry.getKey());
         }
         tasks.clear();
+
+        // 液体ブロックを先に空気へ戻して水流の残りを防ぐ
+        for (Key k : fluidBlocks) {
+            World w = Bukkit.getWorld(k.world());
+            if (w != null) {
+                Block b = w.getBlockAt(k.x(), k.y(), k.z());
+                if (b.isLiquid()) {
+                    b.setType(Material.AIR, false);
+                }
+            }
+        }
+        fluidBlocks.clear();
+
         for (BlockState s : originals.values()) {
             s.update(true, false);
         }
@@ -126,7 +175,6 @@ public final class BlockTracker {
         active.clear();
     }
 
-    /** 周囲のプレイヤーにヒビ割れ進行度パケットを送信 */
     private void sendCrack(Key k, float progress, int sourceId) {
         World w = Bukkit.getWorld(k.world());
         if (w == null) return;
@@ -138,7 +186,6 @@ public final class BlockTracker {
         }
     }
 
-    /** ヒビ割れ表示をリセット */
     private void clearCrack(Key k) {
         World w = Bukkit.getWorld(k.world());
         if (w == null) return;

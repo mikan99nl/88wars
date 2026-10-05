@@ -22,15 +22,18 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.inventory.meta.ItemMeta;
 
 /**
  * Randomizer:
  *  - 3分以内に敵を全員倒す、または中央 5x5 を自分の色の羊毛で埋め尽くせば勝利
- *  - 開始5秒後に、kits.yml (デフォルト10種 + 自作kit) から抽選された同一の装備が全員に平等に配布される
+ *  - 中央には初期状態で白色コンクリートが敷き詰められ、ツルハシで破壊して自分の羊毛に置き換える
  */
 public final class RandomizerMode extends WarsMode {
     public static final int HALF = 2; // 5x5
@@ -89,13 +92,27 @@ public final class RandomizerMode extends WarsMode {
         selectedKitId = null;
         selectedKitName = null;
         warned.clear();
-        if (fill()) m.broadcastToMatch("&e勝利条件: &f敵を全員倒す &7or &f中央5x5を自分の色の羊毛で埋める");
-        else m.broadcastToMatch("&e勝利条件: &f敵チームを全滅させる" + (deathChest() ? " &7(倒した相手の遺品はチェストに入る)" : ""));
+
+        // ★ 中央 5x5 の制圧地点に初期ブロックとして「白色のコンクリート」を敷き詰める
+        if (fill()) {
+            Arena a = m.arena();
+            World w = m.world();
+            for (int dx = -HALF; dx <= HALF; dx++) {
+                for (int dz = -HALF; dz <= HALF; dz++) {
+                    Block b = w.getBlockAt(a.cx + dx, a.cy, a.cz + dz);
+                    // 元のブロックを原状復帰に登録
+                    m.blocks().trackFixed(b, b.getState());
+                    b.setType(Material.WHITE_CONCRETE, false);
+                }
+            }
+            m.broadcastToMatch("&e勝利条件: &f敵を全員倒す &7or &f中央5x5の白コンクリートを壊して自色羊毛で埋める");
+        } else {
+            m.broadcastToMatch("&e勝利条件: &f敵チームを全滅させる" + (deathChest() ? " &7(倒した相手の遺品はチェストに入る)" : ""));
+        }
     }
 
     @Override
     public void onGraceEnd(Match m) {
-        // 運営指定Kitがあればそれを、無ければ有効(ON)のKitからランダム抽選
         selectedKitId = plugin.kits().pickMatchKit();
         if (selectedKitId == null) {
             m.broadcastToMatch("&c[エラー] 使用可能なキットがありません！");
@@ -110,9 +127,7 @@ public final class RandomizerMode extends WarsMode {
             Player p = mp.player();
             if (p == null || mp.left || !mp.alive) continue;
 
-            // kits.yml から装備を反映
             plugin.kits().applyKit(p, selectedKitId);
-            // チーム用羊毛・ハサミ・革防具チーム色染色
             applyWarsExtras(p, mp.team, stacks);
 
             Sfx.gearGive(p);
@@ -126,11 +141,10 @@ public final class RandomizerMode extends WarsMode {
         }
     }
 
-    /** 羊毛、ハサミの配布、および革防具のチームカラー染色 */
+    /** 羊毛、ハサミ、革防具染色、および白色コンクリート破壊用ツルハシの配布 */
     private void applyWarsExtras(Player p, MatchTeam team, int stacks) {
         PlayerInventory inv = p.getInventory();
 
-        // 革防具を着ている場合はチームカラーに染める
         org.bukkit.Color teamColor = Colors.color(team.color);
         for (ItemStack piece : new ItemStack[]{inv.getHelmet(), inv.getChestplate(), inv.getLeggings(), inv.getBoots()}) {
             if (piece != null && piece.getItemMeta() instanceof org.bukkit.inventory.meta.LeatherArmorMeta meta) {
@@ -143,6 +157,21 @@ public final class RandomizerMode extends WarsMode {
         inv.addItem(new ItemStack(Material.SHEARS));
         for (int i = 0; i < stacks; i++) {
             inv.addItem(new ItemStack(Colors.wool(team.color), 64));
+        }
+
+        // ★ 白色コンクリートを素早く掘れる専用ツルハシ（効率強化III・耐久無限）を配布
+        if (fill()) {
+            ItemStack pickaxe = new ItemStack(Material.DIAMOND_PICKAXE);
+            ItemMeta pmeta = pickaxe.getItemMeta();
+            if (pmeta != null) {
+                pmeta.displayName(Msg.c("&b&l中央コンクリート破壊用ツルハシ"));
+                pmeta.lore(List.of(Msg.c("&7中央の白色コンクリートを破壊できます")));
+                pmeta.addEnchant(Enchantment.EFFICIENCY, 3, true);
+                pmeta.setUnbreakable(true);
+                pmeta.addItemFlags(ItemFlag.HIDE_ENCHANTS, ItemFlag.HIDE_UNBREAKABLE);
+                pickaxe.setItemMeta(pmeta);
+            }
+            inv.addItem(pickaxe);
         }
     }
 
@@ -166,6 +195,7 @@ public final class RandomizerMode extends WarsMode {
     @Override
     public boolean canPlace(Match m, MatchPlayer p, Block b) {
         if (!fill()) return true;
+        // 中央エリアより上にはブロックを設置させない
         if (inFootprint(m.arena(), b) && b.getY() != m.arena().cy) {
             Player pl = p.player();
             if (pl != null) {
@@ -205,7 +235,11 @@ public final class RandomizerMode extends WarsMode {
     @Override
     public void onBlockBroken(Match m, MatchPlayer p, Block b) {
         if (fill() && isCell(m.arena(), b)) {
-            m.world().playSound(b.getLocation(), Sound.BLOCK_WOOL_BREAK, 1.0f, 0.8f);
+            if (b.getType() == Material.WHITE_CONCRETE) {
+                m.world().playSound(b.getLocation(), Sound.BLOCK_STONE_BREAK, 1.0f, 1.0f);
+            } else {
+                m.world().playSound(b.getLocation(), Sound.BLOCK_WOOL_BREAK, 1.0f, 0.8f);
+            }
         }
     }
 
@@ -230,10 +264,10 @@ public final class RandomizerMode extends WarsMode {
         if (!fill()) {
             return List.of("&fチーム生存: &a" + viewer.team.aliveCount() + "&7/" + viewer.team.members.size(),
                     "&fキル: &a" + viewer.kills,
-                    "&fあなたの色: " + Colors.code(viewer.team.color) + Colors.jp(viewer.team.color));
+                    "&fあなたの色: " + Colors.code(viewer.team.color) + "&l" + Colors.en(viewer.team.color));
         }
         return List.of("&f制圧マス: &a" + cellsOwned(m, viewer.team) + "&7/" + CELLS,
-                "&fあなたの色: " + Colors.code(viewer.team.color) + Colors.jp(viewer.team.color));
+                "&fあなたの色: " + Colors.code(viewer.team.color) + "&l" + Colors.en(viewer.team.color));
     }
 
     // ------------------------------------------------------------ 遺品チェスト (DUO)

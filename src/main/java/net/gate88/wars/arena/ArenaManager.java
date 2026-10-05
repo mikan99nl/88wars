@@ -30,6 +30,8 @@ public final class ArenaManager {
             arena.cz = a.getInt("cz");
             arena.enabled = a.getBoolean("enabled", true);
             arena.map = a.getString("map");
+            arena.maxTeams = a.getInt("maxTeams", 0);
+            arena.teamSize = a.getInt("teamSize", 0);
             for (String s : a.getStringList("spawns")) {
                 try {
                     arena.spawns.add(Pos.parse(s));
@@ -51,6 +53,8 @@ public final class ArenaManager {
             plugin.data().set(p + "cz", a.cz);
             plugin.data().set(p + "enabled", a.enabled);
             plugin.data().set(p + "map", a.map);
+            plugin.data().set(p + "maxTeams", a.maxTeams);
+            plugin.data().set(p + "teamSize", a.teamSize);
             List<String> sp = new ArrayList<>();
             for (Pos pos : a.spawns) sp.add(pos.serialize());
             plugin.data().set(p + "spawns", sp);

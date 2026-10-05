@@ -7,86 +7,71 @@ import net.gate88.wars.arena.Arena;
 import net.gate88.wars.arena.ArenaBuilder;
 import net.gate88.wars.mode.WarsMode;
 import net.gate88.wars.util.Msg;
+import net.gate88.wars.util.Pos;
 import net.gate88.wars.util.Sfx;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.jetbrains.annotations.NotNull;
 
-/** 管理者用設定GUI (/wars admin) */
+/** 管理者用総合設定GUI (/wars admin) - 全設定へ分岐可能 */
 public final class AdminGui implements InventoryHolder {
-    public enum Page { MAIN, ARENAS }
+    public enum Page {
+        MAIN,
+        MODES,
+        MODE_SETTINGS,
+        ARENAS,
+        ARENA_SETTINGS,
+        LOBBY_SETTINGS,
+        LOCATIONS,
+        POINTS_SETTINGS
+    }
 
-    private record Num(String path, String label, Material icon, double step, double min, double max, boolean isInt) {}
-
-    private record Toggle(String path, String label, Material icon, String[] values) {}
-
-    private static final List<Num> NUMS = List.of(
-            new Num("lobby.min-players", "最低開始人数", Material.PLAYER_HEAD, 1, 1, 16, true),
-            new Num("lobby.max-players", "最大参加人数", Material.PLAYER_HEAD, 1, 1, 16, true),
-            new Num("lobby.countdown-seconds", "開始カウントダウン(秒)", Material.CLOCK, 5, 5, 300, true),
-            new Num("lobby.full-countdown-seconds", "満員時カウントダウン(秒)", Material.CLOCK, 5, 3, 120, true),
-            new Num("lobby.return-delay-seconds", "ロビー転送までの秒数", Material.ENDER_PEARL, 1, 1, 30, true),
-            new Num("points.kill", "キルpoint", Material.IRON_SWORD, 5, 0, 500, true),
-            new Num("points.survival", "生存point(1回あたり)", Material.GOLDEN_APPLE, 1, 0, 50, true),
-            new Num("points.survival-interval-seconds", "生存point間隔(秒)", Material.CLOCK, 1, 1, 60, true),
-            // ---- Randomizer DUO
-            new Num("modes.randomizer_duo.duration-seconds", "[DUO] 試合時間(秒)", Material.DISPENSER, 30, 60, 900, true),
-            new Num("modes.randomizer_duo.grace-seconds", "[DUO] 装備配布までの秒数", Material.CHEST, 1, 0, 30, true),
-            new Num("modes.randomizer_duo.block-decay-seconds", "[DUO] 設置ブロック消滅(秒)", Material.WHITE_WOOL, 1, 0, 60, true),
-            new Num("modes.randomizer_duo.wool-stacks", "[DUO] 羊毛スタック数", Material.WHITE_WOOL, 1, 1, 6, true),
-            new Num("modes.randomizer_duo.min-players", "[DUO] 最低人数", Material.PLAYER_HEAD, 1, 2, 16, true),
-            new Num("modes.randomizer_duo.border.start-radius", "[DUO] ボーダー初期半径", Material.RED_STAINED_GLASS, 1, 12, 60, true),
-            new Num("modes.randomizer_duo.border.end-radius", "[DUO] ボーダー最終半径", Material.RED_STAINED_GLASS, 1, 6, 30, true),
-            new Num("modes.randomizer_duo.border.damage-per-second", "[DUO] ボーダーダメージ/秒(1=0.5♥)", Material.REDSTONE, 0.5, 0, 10, false),
-            // ---- Randomizer TEAM
-            new Num("modes.randomizer_team.duration-seconds", "[TEAM] 試合時間(秒)", Material.CHEST_MINECART, 30, 60, 900, true),
-            new Num("modes.randomizer_team.grace-seconds", "[TEAM] 装備配布までの秒数", Material.CHEST, 1, 0, 30, true),
-            new Num("modes.randomizer_team.block-decay-seconds", "[TEAM] 設置ブロック消滅(秒)", Material.WHITE_WOOL, 1, 0, 60, true),
-            new Num("modes.randomizer_team.wool-stacks", "[TEAM] 羊毛スタック数", Material.WHITE_WOOL, 1, 1, 6, true),
-            new Num("modes.randomizer_team.team-count", "[TEAM] チーム数", Material.WHITE_BANNER, 1, 2, 8, true),
-            new Num("modes.randomizer_team.min-players", "[TEAM] 最低人数", Material.PLAYER_HEAD, 1, 2, 16, true));
-
-    private static final List<Toggle> TOGGLES = List.of(
-            new Toggle("lobby.start-mode", "試合開始モード", Material.REDSTONE_TORCH, new String[]{"AUTO", "MANUAL"}),
-            new Toggle("lobby.auto-start", "人数が揃ったら自動開始", Material.REPEATER, new String[]{"true", "false"}),
-            new Toggle("lobby.mode-select","モード選択方式", Material.COMPARATOR, new String[]{"VOTE", "RANDOM"}),
-            new Toggle("modes.randomizer_duo.enabled", "[DUO] 有効", Material.DISPENSER, new String[]{"true", "false"}),
-            new Toggle("modes.randomizer_team.enabled", "[TEAM] 有効", Material.CHEST_MINECART, new String[]{"true", "false"}),
-            new Toggle("modes.randomizer_duo.wool-fill", "[DUO] 羊毛5x5制圧の勝利条件", Material.WHITE_WOOL, new String[]{"true", "false"}),
-            new Toggle("modes.randomizer_duo.death-chest", "[DUO] 遺品チェスト", Material.CHEST, new String[]{"true", "false"}),
-            new Toggle("modes.randomizer_team.wool-fill", "[TEAM] 羊毛5x5制圧の勝利条件", Material.WHITE_WOOL, new String[]{"true", "false"}),
-            new Toggle("modes.randomizer_team.death-chest", "[TEAM] 遺品チェスト", Material.CHEST, new String[]{"true", "false"}),
-            new Toggle("modes.randomizer_duo.border.enabled", "[DUO] 特殊ボーダー", Material.RED_STAINED_GLASS_PANE, new String[]{"true", "false"}),
-            new Toggle("modes.randomizer_team.border.enabled", "[TEAM] 特殊ボーダー", Material.RED_STAINED_GLASS_PANE, new String[]{"true", "false"}),
-            new Toggle("scoreboard.extra-lines", "スコアボード詳細行", Material.OAK_SIGN, new String[]{"true", "false"}),
-            new Toggle("podium.type", "表彰台の種類", Material.ARMOR_STAND, new String[]{"MANNEQUIN", "ARMOR_STAND"}));
+    private record Num(String path, String label, Material icon, double step, double min, double max, boolean isInt, double def) {}
+    private record Toggle(String path, String label, Material icon, String[] values, String def) {}
 
     private final WarsPlugin plugin;
     private final Page page;
     private final Inventory inv;
-    /** slot -> action id */
+    private final String targetId;
     private final java.util.Map<Integer, String> actions = new java.util.HashMap<>();
 
-    private AdminGui(WarsPlugin plugin, Page page) {
+    private AdminGui(WarsPlugin plugin, Page page, String targetId) {
         this.plugin = plugin;
         this.page = page;
-        this.inv = Bukkit.createInventory(this, 54, Msg.c(page == Page.MAIN ? "&8[88WARS] 管理設定" : "&8[88WARS] アリーナ一覧"));
+        this.targetId = targetId;
+        String titleStr = switch (page) {
+            case MAIN -> "&8[88WARS] 総合管理メニュー";
+            case MODES -> "&8[88WARS] ゲームモード選択";
+            case MODE_SETTINGS -> "&8[88WARS] モード設定: &e" + (targetId != null ? targetId : "");
+            case ARENAS -> "&8[88WARS] アリーナ一覧";
+            case ARENA_SETTINGS -> "&8[88WARS] アリーナ設定: &e" + (targetId != null ? targetId : "");
+            case LOBBY_SETTINGS -> "&8[88WARS] ロビー＆システム設定";
+            case LOCATIONS -> "&8[88WARS] 位置・ホログラム設定";
+            case POINTS_SETTINGS -> "&8[88WARS] ポイント＆ランキング設定";
+        };
+        this.inv = Bukkit.createInventory(this, 54, Msg.c(titleStr));
     }
 
     @Override
-    public Inventory getInventory() {
+    public @NotNull Inventory getInventory() {
         return inv;
     }
 
     public static void open(WarsPlugin plugin, Player p, Page page) {
-        AdminGui g = new AdminGui(plugin, page);
+        open(plugin, p, page, null);
+    }
+
+    public static void open(WarsPlugin plugin, Player p, Page page, String targetId) {
+        AdminGui g = new AdminGui(plugin, page, targetId);
         g.render();
         p.openInventory(g.inv);
         Sfx.menuOpen(p);
@@ -95,12 +80,18 @@ public final class AdminGui implements InventoryHolder {
     private ItemStack item(Material m, String name, List<String> lore) {
         ItemStack it = new ItemStack(m);
         ItemMeta meta = it.getItemMeta();
-        meta.displayName(Msg.c(name));
-        List<Component> l = new ArrayList<>();
-        for (String s : lore) l.add(Msg.c(s));
-        meta.lore(l);
-        it.setItemMeta(meta);
+        if (meta != null) {
+            meta.displayName(Msg.c(name));
+            List<Component> l = new ArrayList<>();
+            for (String s : lore) l.add(Msg.c(s));
+            meta.lore(l);
+            it.setItemMeta(meta);
+        }
         return it;
+    }
+
+    private void put(int slot, ItemStack it) {
+        put(slot, it, null);
     }
 
     private void put(int slot, ItemStack it, String action) {
@@ -108,43 +99,114 @@ public final class AdminGui implements InventoryHolder {
         if (action != null) actions.put(slot, action);
     }
 
-    private String fmt(Num n) {
-        return n.isInt() ? String.valueOf(plugin.getConfig().getInt(n.path())) : String.valueOf(plugin.getConfig().getDouble(n.path()));
-    }
-
     private void render() {
         inv.clear();
         actions.clear();
-        if (page == Page.MAIN) renderMain();
-        else renderArenas();
+        switch (page) {
+            case MAIN -> renderMain();
+            case MODES -> renderModes();
+            case MODE_SETTINGS -> renderModeSettings();
+            case ARENAS -> renderArenas();
+            case ARENA_SETTINGS -> renderArenaSettings();
+            case LOBBY_SETTINGS -> renderLobbySettings();
+            case LOCATIONS -> renderLocations();
+            case POINTS_SETTINGS -> renderPointsSettings();
+        }
     }
 
+    // ------------------------------------------------ ① メインダッシュボード (MAIN)
     private void renderMain() {
-        int slot = 0;
-        for (int i = 0; i < NUMS.size(); i++) {
-            Num n = NUMS.get(i);
-            put(slot++, item(n.icon(), "&e" + n.label(), List.of("&7現在: &a" + fmt(n), "",
-                    "&7左クリック: &f+" + n.step(), "&7右クリック: &f-" + n.step(), "&7Shift: &f×5")), "num:" + i);
-        }
-        slot = 22;
-        for (int i = 0; i < TOGGLES.size(); i++) {
-            Toggle t = TOGGLES.get(i);
-            put(slot++, item(t.icon(), "&b" + t.label(), List.of("&7現在: &a" + plugin.getConfig().getString(t.path()), "",
-                    "&7クリックで切り替え")), "tog:" + i);
-        }
-        // 位置設定
-        put(36, item(Material.RED_BED, "&aロビー地点を現在地に設定", List.of("&7参加/試合後の転送先")), "setlobby");
-        put(37, item(Material.OAK_SIGN, "&aランキングホログラムを現在地に設定", List.of("&7足元より少し上に表示されます")), "sethologram");
-        put(38, item(Material.GOLD_BLOCK, "&6表彰台 1位 を現在地に設定", List.of()), "setpodium:1");
-        put(39, item(Material.IRON_BLOCK, "&f表彰台 2位 を現在地に設定", List.of()), "setpodium:2");
-        put(40, item(Material.COPPER_BLOCK, "&c表彰台 3位 を現在地に設定", List.of()), "setpodium:3");
-        put(45, item(Material.MAP, "&dアリーナ一覧 / 生成", List.of("&7アリーナのTP・自動生成")), "arenas");
-        put(47, item(Material.LIME_CONCRETE, "&a試合を今すぐ開始", List.of("&7ロビーの全員で開始 (人数不問)")), "start");
-        put(48, item(Material.RED_CONCRETE, "&c進行中の試合を中止", List.of("&7ポイントは付与されません")), "stop");
-        put(50, item(Material.BOOK, "&fconfig.yml を再読込", List.of()), "reload");
+        put(10, item(Material.DIAMOND_SWORD, "&e&l【ゲームモード設定】", List.of("&7各モードの試合時間・猶予時間・ルール等を設定", "&eクリックして開く")), "page:MODES");
+        put(12, item(Material.GRASS_BLOCK, "&a&l【アリーナ管理】", List.of("&7アリーナ一覧・TP・チーム数・スポーン・生成", "&eクリックして開く")), "page:ARENAS");
+        put(14, item(Material.CHEST, "&6&l【Kit管理・作成】", List.of("&7Kit一覧・編集・ポーション効果設定 (/kit)", "&eクリックして開く")), "open_kitgui");
+        put(16, item(Material.PLAYER_HEAD, "&b&l【Kit権限管理】 &c[OP限定]", List.of("&7誰がKit追加/クリエイティブ権限を持つか管理 (/kit perm)", "&eクリックして開く")), "open_perm_gui");
+
+        put(28, item(Material.REDSTONE_TORCH, "&d&l【ロビー＆システム設定】", List.of("&7開始人数、カウントダウン秒数、投票配布ON/OFF等", "&eクリックして開く")), "page:LOBBY_SETTINGS");
+        put(30, item(Material.COMPASS, "&9&l【ロビー位置・ホログラム設定】", List.of("&7ロビー地点、ランキング、表彰台1〜3位の現在地設定", "&eクリックして開く")), "page:LOCATIONS");
+        put(32, item(Material.EMERALD, "&a&l【ポイント＆ランキング設定】", List.of("&7キルポイント、生存ポイント、間隔の設定", "&eクリックして開く")), "page:POINTS_SETTINGS");
+        put(34, item(Material.NETHER_STAR, "&c&l【試合コントロール】", List.of("&a左クリック: 試合を今すぐ開始", "&c右クリック: 進行中の試合を中止")), "match_control");
+
+        put(49, item(Material.BOOK, "&f&l全設定・データ再読込 (Reload)", List.of("&7config.yml, data.yml, kits.yml を再読み込み")), "reload");
         put(53, item(Material.BARRIER, "&c閉じる", List.of()), "close");
     }
 
+    // ------------------------------------------------ ② ゲームモード選択 (MODES)
+    private void renderModes() {
+        int slot = 10;
+        for (WarsMode m : plugin.modes().all()) {
+            if (slot > 34) break;
+            boolean enabled = m.enabled();
+            List<String> lore = new ArrayList<>(m.description);
+            lore.add("");
+            lore.add("&7状態: " + (enabled ? "&a有効" : "&c無効"));
+            lore.add("&7試合時間: &f" + m.durationSeconds() + "秒");
+            lore.add("&7猶予時間: &f" + m.graceSeconds() + "秒");
+            lore.add("&7チーム数: &f" + (m.teamCount() > 0 ? m.teamCount() : "自動") + " / チーム人数: &f" + m.teamSize());
+            lore.add("");
+            lore.add("&eクリックして詳細設定を変更");
+
+            put(slot++, item(m.icon, (enabled ? "&a&l" : "&c&l") + m.displayName + " &7(" + m.id + ")", lore), "mode_sel:" + m.id);
+            if (slot == 17) slot = 19;
+            if (slot == 26) slot = 28;
+        }
+
+        put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
+    }
+
+    // ------------------------------------------------ ③ モード個別詳細設定 (MODE_SETTINGS)
+    private void renderModeSettings() {
+        if (targetId == null) { renderModes(); return; }
+        String prefix = "modes." + targetId + ".";
+
+        List<Num> modeNums = List.of(
+                new Num(prefix + "duration-seconds", "試合時間(秒)", Material.CLOCK, 30, 30, 900, true, 180),
+                new Num(prefix + "grace-seconds", "装備配布までの猶予(秒)", Material.CHEST, 1, 0, 30, true, 5),
+                new Num(prefix + "block-decay-seconds", "設置ブロック崩壊(秒)", Material.WHITE_WOOL, 1, 0, 60, true, 12),
+                new Num(prefix + "min-players", "最低必要人数", Material.PLAYER_HEAD, 1, 1, 16, true, 2),
+                new Num(prefix + "team-count", "チーム数 (0=自動/team-size準拠)", Material.WHITE_BANNER, 1, 0, 8, true, 0),
+                new Num(prefix + "team-size", "1チームの人数", Material.ARMOR_STAND, 1, 1, 8, true, 1),
+                new Num(prefix + "wool-stacks", "羊毛スタック数", Material.SHEARS, 1, 1, 6, true, 3),
+                new Num(prefix + "border.start-radius", "ボーダー初期半径", Material.RED_STAINED_GLASS, 2, 10, 60, true, 28),
+                new Num(prefix + "border.end-radius", "ボーダー最終半径", Material.RED_STAINED_GLASS, 1, 4, 30, true, 9),
+                new Num(prefix + "border.damage-per-second", "ボーダーダメージ/秒", Material.REDSTONE, 0.5, 0.5, 10, false, 1.0)
+        );
+
+        int slot = 10;
+        for (Num n : modeNums) {
+            if (slot == 17) slot = 19;
+            if (slot == 26) slot = 28;
+            put(slot++, item(n.icon(), "&e" + n.label(), List.of(
+                    "&7現在: &a" + (n.isInt() ? plugin.getConfig().getInt(n.path(), (int)n.def()) : plugin.getConfig().getDouble(n.path(), n.def())),
+                    "",
+                    "&7左クリック: &f+" + n.step(),
+                    "&7右クリック: &f-" + n.step(),
+                    "&7Shift: &f×5",
+                    "&d[Qキー(ドロップ)] 初期値(" + (n.isInt() ? (int)n.def() : n.def()) + ")に戻す"
+            )), "mnum:" + n.path() + ":" + n.step() + ":" + n.min() + ":" + n.max() + ":" + n.isInt() + ":" + n.def());
+        }
+
+        List<Toggle> modeToggles = List.of(
+                new Toggle(prefix + "enabled", "モード有効化", Material.REPEATER, new String[]{"true", "false"}, "true"),
+                new Toggle(prefix + "wool-fill", "中央5x5制圧の勝利条件", Material.WHITE_CONCRETE, new String[]{"true", "false"}, "true"),
+                new Toggle(prefix + "death-chest", "遺品チェスト生成", Material.ENDER_CHEST, new String[]{"true", "false"}, "false"),
+                new Toggle(prefix + "border.enabled", "特殊ボーダー有効化", Material.RED_STAINED_GLASS_PANE, new String[]{"true", "false"}, "true")
+        );
+
+        slot = 37;
+        for (Toggle t : modeToggles) {
+            String val = plugin.getConfig().getString(t.path(), t.def());
+            put(slot++, item(t.icon(), "&b" + t.label(), List.of(
+                    "&7現在: " + (val.equalsIgnoreCase("true") ? "&a有効 (true)" : "&c無効 (false)"),
+                    "",
+                    "&7クリックで切り替え",
+                    "&d[Qキー(ドロップ)] 初期値(" + t.def() + ")に戻す"
+            )), "mtog:" + t.path() + ":" + t.def());
+        }
+
+        put(49, item(Material.ARROW, "&fモード選択に戻る", List.of()), "page:MODES");
+    }
+
+    // ------------------------------------------------ ④ アリーナ一覧 (ARENAS)
     private void renderArenas() {
         int slot = 0;
         for (Arena a : plugin.arenas().all()) {
@@ -153,146 +215,382 @@ public final class AdminGui implements InventoryHolder {
             put(slot++, item(a.isReady() ? Material.GRASS_BLOCK : Material.DEAD_BUSH,
                     (a.isReady() ? "&a" : "&c") + a.id,
                     List.of("&7モード: &f" + (md == null ? a.modeId : md.displayName),
-                            "&7ワールド: &f" + a.worldName,
-                            "&7中心: &f" + a.cx + ", " + a.cy + ", " + a.cz,
-                            "&7スポーン: &f" + a.spawns.size(),
                             "&7状態: " + (a.enabled ? "&a有効" : "&6編集中 (試合に使われない)"),
-                            "&7マップ: &f" + (a.map == null ? "自動生成" : a.map), "",
-                            "&e左クリック: &fテレポート",
-                            "&e右クリック: &f有効 / 編集中 を切り替え",
-                            "&eShift+左クリック: &f現在地を中心に再生成(上書き注意!)")), "arena:" + a.id);
+                            "&7中心: &f" + a.cx + ", " + a.cy + ", " + a.cz,
+                            "&7チーム数設定: &e" + (a.maxTeams == 0 ? "自動(モード準拠)" : a.maxTeams + "チーム"),
+                            "&7チーム人数設定: &e" + (a.teamSize == 0 ? "自動(モード準拠)" : a.teamSize + "人"),
+                            "&7スポーン地点数: &f" + a.spawns.size() + "個",
+                            "",
+                            "&e左クリック: &fアリーナ個別設定・編集を開く",
+                            "&b右クリック: &fアリーナへテレポート")), "arena_select:" + a.id);
         }
-        put(45, item(Material.EMERALD, "&a現在地に Randomizer アリーナを新規生成",
-                List.of("&7id は自動採番 (randomizer1, 2, ...)", "&c61x61 の範囲の地形を上書きします!", "&6生成直後は編集中 (自動で試合は始まりません)")), "newarena");
-        put(49, item(Material.ARROW, "&f戻る", List.of()), "main");
+
+        put(45, item(Material.EMERALD, "&a現在地に Randomizer アリーナを新規自動生成",
+                List.of("&7id は自動採番 (randomizer1, 2, ...)", "&c61x61 の範囲の地形を上書きします!")), "newarena");
+        put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
 
+    // ------------------------------------------------ ⑤ アリーナ詳細・個別設定 (ARENA_SETTINGS)
+    private void renderArenaSettings() {
+        if (targetId == null) { renderArenas(); return; }
+        Arena a = plugin.arenas().get(targetId);
+        if (a == null) { renderArenas(); return; }
+
+        // ★ 修正箇所: 第3引数に null を渡し、引数エラーを解消
+        put(4, item(a.isReady() ? Material.GRASS_BLOCK : Material.DEAD_BUSH, "&e&lアリーナ: " + a.id,
+                List.of("&7ワールド: &f" + a.worldName, "&7中心座標: &f" + a.cx + ", " + a.cy + ", " + a.cz)), null);
+
+        put(19, item(Material.ENDER_PEARL, "&bアリーナの中心へテレポート", List.of("&7中心座標へワープします")), "atp:" + a.id);
+        put(21, item(a.enabled ? Material.LIME_DYE : Material.GRAY_DYE,
+                a.enabled ? "&a【有効中】 (試合で使用されます)" : "&6【編集中】 (試合で使用されません)",
+                List.of("&7クリックで 有効 / 編集中 を切り替え")), "atog_enabled:" + a.id);
+
+        put(23, item(Material.WHITE_BANNER, "&e最大チーム数: &6" + (a.maxTeams == 0 ? "自動(モード準拠)" : a.maxTeams + "チーム"),
+                List.of("&7左クリック: +1チーム", "&7右クリック: -1チーム", "&d[Qキー] 自動(0)にリセット")), "ateams:" + a.id);
+
+        put(25, item(Material.PLAYER_HEAD, "&e1チームの最大人数: &6" + (a.teamSize == 0 ? "自動(モード準拠)" : a.teamSize + "人"),
+                List.of("&7左クリック: +1人", "&7右クリック: -1人", "&d[Qキー] 自動(0)にリセット")), "ateamsize:" + a.id);
+
+        put(29, item(Material.BEACON, "&a現在地にチームスポーンを追加",
+                List.of("&7現在のスポーン数: &e" + a.spawns.size() + "個", "&7立っている位置を次のチームスポーン地点として登録")), "aaddspawn:" + a.id);
+
+        put(31, item(Material.LAVA_BUCKET, "&c全スポーン地点を削除", List.of("&7登録されたスポーン座標をすべてクリアします")), "aclearspawns:" + a.id);
+
+        put(33, item(Material.ANVIL, "&6現在地を中心にマップ再生成", List.of("&c現在地を中心に61x61のマップを再ビルドします")), "arebuild:" + a.id);
+
+        put(40, item(Material.BARRIER, "&4&l【このアリーナを完全削除】", List.of("&7アリーナ登録を完全に抹消します")), "adelete:" + a.id);
+
+        put(49, item(Material.ARROW, "&fアリーナ一覧に戻る", List.of()), "page:ARENAS");
+    }
+
+    // ------------------------------------------------ ⑥ ロビー＆システム設定 (LOBBY_SETTINGS)
+    private void renderLobbySettings() {
+        List<Num> lobbyNums = List.of(
+                new Num("lobby.min-players", "最低開始人数", Material.PLAYER_HEAD, 1, 1, 16, true, 2),
+                new Num("lobby.max-players", "最大参加人数", Material.PLAYER_HEAD, 1, 1, 16, true, 16),
+                new Num("lobby.countdown-seconds", "開始カウントダウン(秒)", Material.CLOCK, 5, 5, 300, true, 30),
+                new Num("lobby.full-countdown-seconds", "満員時カウントダウン(秒)", Material.CLOCK, 5, 3, 120, true, 10),
+                new Num("lobby.return-delay-seconds", "ロビー転送までの秒数", Material.ENDER_PEARL, 1, 1, 30, true, 5)
+        );
+
+        int slot = 11;
+        for (Num n : lobbyNums) {
+            put(slot++, item(n.icon(), "&e" + n.label(), List.of(
+                    "&7現在: &a" + plugin.getConfig().getInt(n.path(), (int)n.def()),
+                    "",
+                    "&7左クリック: &f+" + (int)n.step(),
+                    "&7右クリック: &f-" + (int)n.step(),
+                    "&7Shift: &f×5",
+                    "&d[Qキー] 初期値(" + (int)n.def() + ")に戻す"
+            )), "lnum:" + n.path() + ":" + n.step() + ":" + n.min() + ":" + n.max() + ":" + n.def());
+        }
+
+        List<Toggle> lobbyToggles = List.of(
+                new Toggle("lobby.start-mode", "試合開始モード", Material.REDSTONE_TORCH, new String[]{"AUTO", "MANUAL"}, "AUTO"),
+                new Toggle("lobby.auto-start", "人数が揃ったら自動開始", Material.REPEATER, new String[]{"true", "false"}, "true"),
+                new Toggle("lobby.mode-select", "モード選出方式", Material.COMPARATOR, new String[]{"VOTE", "RANDOM"}, "VOTE"),
+                new Toggle("scoreboard.extra-lines", "スコアボード詳細行", Material.OAK_SIGN, new String[]{"true", "false"}, "true"),
+                new Toggle("podium.type", "表彰台の種類", Material.ARMOR_STAND, new String[]{"MANNEQUIN", "ARMOR_STAND"}, "MANNEQUIN")
+        );
+
+        slot = 20;
+        for (Toggle t : lobbyToggles) {
+            String val = plugin.getConfig().getString(t.path(), t.def());
+            put(slot++, item(t.icon(), "&b" + t.label(), List.of(
+                    "&7現在: &a" + val,
+                    "",
+                    "&7クリックで切り替え",
+                    "&d[Qキー] 初期値(" + t.def() + ")に戻す"
+            )), "ltog:" + t.path() + ":" + t.def());
+        }
+
+        boolean voteItems = VoteMenu.isVoteItemsEnabled();
+        put(31, item(voteItems ? Material.LIME_DYE : Material.GRAY_DYE,
+                voteItems ? "&a【投票アイテム配布: 有効 (配布中)】" : "&c【投票アイテム配布: 無効 (停止中)】",
+                List.of("&7クリックで切り替え (/wars vote toggle と連動)", "&7一時的に全員の投票アイテム配布をストップできます")), "toggle_vote_items");
+
+        put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
+    }
+
+    // ------------------------------------------------ ⑦ ロビー位置・ホログラム設定 (LOCATIONS)
+    private void renderLocations() {
+        put(20, item(Material.RED_BED, "&a&lロビー地点を現在地に設定", List.of("&7参加時や試合終了後の転送先")), "loc:setlobby");
+        put(22, item(Material.OAK_SIGN, "&a&lランキングホログラムを現在地に設定", List.of("&7現在立っている足元の上に表示")), "loc:sethologram");
+        put(24, item(Material.GOLD_BLOCK, "&6&l表彰台 1位 を現在地に設定", List.of("&7優勝者のスタンド位置")), "loc:setpodium:1");
+        put(32, item(Material.IRON_BLOCK, "&f&l表彰台 2位 を現在地に設定", List.of("&72位のスタンド位置")), "loc:setpodium:2");
+        put(34, item(Material.COPPER_BLOCK, "&c&l表彰台 3位 を現在地に設定", List.of("&73位のスタンド位置")), "loc:setpodium:3");
+
+        put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
+    }
+
+    // ------------------------------------------------ ⑧ ポイント設定 (POINTS_SETTINGS)
+    private void renderPointsSettings() {
+        List<Num> ptsNums = List.of(
+                new Num("points.kill", "キル獲得point", Material.IRON_SWORD, 5, 0, 500, true, 30),
+                new Num("points.survival", "生存point (1回あたり)", Material.GOLDEN_APPLE, 1, 0, 50, true, 1),
+                new Num("points.survival-interval-seconds", "生存point付与間隔(秒)", Material.CLOCK, 1, 1, 60, true, 5)
+        );
+
+        int slot = 21;
+        for (Num n : ptsNums) {
+            put(slot++, item(n.icon(), "&e" + n.label(), List.of(
+                    "&7現在: &a" + plugin.getConfig().getInt(n.path(), (int)n.def()) + " pt",
+                    "",
+                    "&7左クリック: &f+" + (int)n.step(),
+                    "&7右クリック: &f-" + (int)n.step(),
+                    "&7Shift: &f×5",
+                    "&d[Qキー] 初期値(" + (int)n.def() + ")に戻す"
+            )), "pnum:" + n.path() + ":" + n.step() + ":" + n.min() + ":" + n.max() + ":" + n.def());
+        }
+
+        put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
+    }
+
+    // ------------------------------------------------ クリック処理
     public void click(Player p, int slot, ClickType type) {
         String act = actions.get(slot);
         if (act == null) return;
         Sfx.click(p);
+
+        boolean isDrop = (type == ClickType.DROP || type == ClickType.CONTROL_DROP);
         boolean left = type.isLeftClick();
         boolean shift = type.isShiftClick();
-        if (act.startsWith("num:")) {
-            Num n = NUMS.get(Integer.parseInt(act.substring(4)));
-            double d = n.step() * (shift ? 5 : 1) * (left ? 1 : -1);
-            if (n.isInt()) {
-                int v = (int) Math.max(n.min(), Math.min(n.max(), plugin.getConfig().getInt(n.path()) + d));
-                plugin.getConfig().set(n.path(), v);
+
+        if (act.startsWith("page:")) {
+            open(plugin, p, Page.valueOf(act.substring(5)));
+            return;
+        }
+
+        if (act.startsWith("mnum:") || act.startsWith("lnum:") || act.startsWith("pnum:")) {
+            String[] parts = act.split(":");
+            String path = parts[1];
+            double step = Double.parseDouble(parts[2]);
+            double min = Double.parseDouble(parts[3]);
+            double max = Double.parseDouble(parts[4]);
+            boolean isInt = parts.length > 5 && Boolean.parseBoolean(parts[5]);
+            double def = Double.parseDouble(parts[parts.length - 1]);
+
+            if (isDrop) {
+                if (isInt) plugin.getConfig().set(path, (int) def);
+                else plugin.getConfig().set(path, def);
+                p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.7f, 1.2f);
             } else {
-                double v = Math.max(n.min(), Math.min(n.max(), plugin.getConfig().getDouble(n.path()) + d));
-                plugin.getConfig().set(n.path(), Math.round(v * 10) / 10.0);
+                double delta = step * (shift ? 5 : 1) * (left ? 1 : -1);
+                if (isInt) {
+                    int cur = plugin.getConfig().getInt(path, (int) def);
+                    plugin.getConfig().set(path, (int) Math.max(min, Math.min(max, cur + delta)));
+                } else {
+                    double cur = plugin.getConfig().getDouble(path, def);
+                    plugin.getConfig().set(path, Math.round(Math.max(min, Math.min(max, cur + delta)) * 10) / 10.0);
+                }
             }
             plugin.saveConfig();
             render();
             return;
         }
-        if (act.startsWith("tog:")) {
-            Toggle t = TOGGLES.get(Integer.parseInt(act.substring(4)));
-            String cur = plugin.getConfig().getString(t.path());
-            int idx = 0;
-            for (int i = 0; i < t.values().length; i++) if (t.values()[i].equalsIgnoreCase(cur)) idx = i;
-            String next = t.values()[(idx + 1) % t.values().length];
-            if (next.equals("true") || next.equals("false")) plugin.getConfig().set(t.path(), Boolean.parseBoolean(next));
-            else plugin.getConfig().set(t.path(), next);
+
+        if (act.startsWith("mtog:") || act.startsWith("ltog:")) {
+            String[] parts = act.split(":");
+            String path = parts[1];
+            String def = parts[2];
+
+            if (isDrop) {
+                if (def.equals("true") || def.equals("false")) plugin.getConfig().set(path, Boolean.parseBoolean(def));
+                else plugin.getConfig().set(path, def);
+                p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.7f, 1.2f);
+            } else {
+                String cur = plugin.getConfig().getString(path, def);
+                if (cur.equalsIgnoreCase("true") || cur.equalsIgnoreCase("false")) {
+                    plugin.getConfig().set(path, !Boolean.parseBoolean(cur));
+                } else if (path.equals("lobby.start-mode")) {
+                    plugin.getConfig().set(path, cur.equalsIgnoreCase("AUTO") ? "MANUAL" : "AUTO");
+                } else if (path.equals("lobby.mode-select")) {
+                    plugin.getConfig().set(path, cur.equalsIgnoreCase("VOTE") ? "RANDOM" : "VOTE");
+                } else if (path.equals("podium.type")) {
+                    plugin.getConfig().set(path, cur.equalsIgnoreCase("MANNEQUIN") ? "ARMOR_STAND" : "MANNEQUIN");
+                }
+            }
             plugin.saveConfig();
             render();
             return;
         }
-        if (act.startsWith("arena:")) {
-            Arena a = plugin.arenas().get(act.substring(6));
-            if (a == null) return;
+
+        if (act.startsWith("mode_sel:")) {
+            open(plugin, p, Page.MODE_SETTINGS, act.substring(9));
+            return;
+        }
+
+        if (act.startsWith("arena_select:")) {
+            String aId = act.substring(13);
             if (!left) {
+                Arena a = plugin.arenas().get(aId);
+                if (a != null && a.center() != null) {
+                    p.teleport(a.center().add(0, 1, 0));
+                    Sfx.teleport(p);
+                }
+            } else {
+                open(plugin, p, Page.ARENA_SETTINGS, aId);
+            }
+            return;
+        }
+
+        if (act.startsWith("atp:")) {
+            Arena a = plugin.arenas().get(act.substring(4));
+            if (a != null && a.center() != null) {
+                p.teleport(a.center().add(0, 1, 0));
+                Sfx.teleport(p);
+            }
+            return;
+        }
+        if (act.startsWith("atog_enabled:")) {
+            Arena a = plugin.arenas().get(act.substring(13));
+            if (a != null) {
                 if (!a.enabled && a.spawns.isEmpty()) {
-                    Msg.send(p, "&cスポーンがありません (/wars arena addspawn " + a.id + ")");
+                    Msg.send(p, "&cスポーン地点がありません");
                     Sfx.deny(p);
                     return;
                 }
                 a.enabled = !a.enabled;
                 plugin.arenas().save();
-                Msg.send(p, a.enabled ? "&aアリーナ &e" + a.id + " &aを有効にしました" : "&eアリーナ &f" + a.id + " &eを編集中にしました");
+                Msg.send(p, a.enabled ? "&aアリーナを有効にしました" : "&6アリーナを編集中にしました");
                 render();
-            } else if (shift) {
+            }
+            return;
+        }
+        if (act.startsWith("ateams:")) {
+            Arena a = plugin.arenas().get(act.substring(7));
+            if (a != null) {
+                if (isDrop) a.maxTeams = 0;
+                else a.maxTeams = Math.max(0, a.maxTeams + (left ? 1 : -1));
+                plugin.arenas().save();
+                render();
+            }
+            return;
+        }
+        if (act.startsWith("ateamsize:")) {
+            Arena a = plugin.arenas().get(act.substring(10));
+            if (a != null) {
+                if (isDrop) a.teamSize = 0;
+                else a.teamSize = Math.max(0, a.teamSize + (left ? 1 : -1));
+                plugin.arenas().save();
+                render();
+            }
+            return;
+        }
+        if (act.startsWith("aaddspawn:")) {
+            Arena a = plugin.arenas().get(act.substring(10));
+            if (a != null) {
+                a.spawns.add(Pos.of(p.getLocation()));
+                plugin.arenas().save();
+                plugin.maps().storeSpawns(a);
+                Msg.send(p, "&a現在地にチーム " + a.spawns.size() + " のスポーン地点を登録しました！");
+                Sfx.success(p);
+                render();
+            }
+            return;
+        }
+        if (act.startsWith("aclearspawns:")) {
+            Arena a = plugin.arenas().get(act.substring(13));
+            if (a != null) {
+                a.spawns.clear();
+                plugin.arenas().save();
+                plugin.maps().storeSpawns(a);
+                Msg.send(p, "&eスポーン地点を全消去しました");
+                Sfx.deny(p);
+                render();
+            }
+            return;
+        }
+        if (act.startsWith("arebuild:")) {
+            Arena a = plugin.arenas().get(act.substring(9));
+            if (a != null) {
                 Location l = p.getLocation();
                 a.worldName = l.getWorld().getName();
-                a.cx = l.getBlockX();
-                a.cy = l.getBlockY();
-                a.cz = l.getBlockZ();
+                a.cx = l.getBlockX(); a.cy = l.getBlockY(); a.cz = l.getBlockZ();
                 ArenaBuilder.build(a);
                 a.map = null;
                 a.enabled = false;
                 plugin.arenas().save();
-                Msg.send(p, "&aアリーナ &e" + a.id + " &aを現在地に再生成しました &6(編集中)");
+                Msg.send(p, "&a現在地を中心にアリーナマップを再生成しました (編集中)");
                 Sfx.success(p);
                 render();
-            } else if (a.center() != null) {
-                p.teleport(a.center().add(0, 1, 0));
-                Sfx.teleport(p);
-            } else {
-                Msg.send(p, "&cワールドが読み込まれていません");
-                Sfx.deny(p);
             }
             return;
         }
+        if (act.startsWith("adelete:")) {
+            String aId = act.substring(8);
+            plugin.arenas().delete(aId);
+            plugin.arenas().save();
+            Msg.send(p, "&cアリーナ " + aId + " を削除しました");
+            open(plugin, p, Page.ARENAS);
+            return;
+        }
+
+        if (act.startsWith("loc:")) {
+            String locAct = act.substring(4);
+            if (locAct.equals("setlobby")) {
+                plugin.setLobbyLocation(p.getLocation());
+                Msg.send(p, "&aロビー地点を設定しました");
+            } else if (locAct.equals("sethologram")) {
+                plugin.setHologramLocation(p.getLocation().add(0, 2.5, 0));
+                plugin.holograms().refresh();
+                Msg.send(p, "&aランキングホログラムを設定しました");
+            } else if (locAct.startsWith("setpodium:")) {
+                int r = Integer.parseInt(locAct.substring(10));
+                plugin.setPodiumLocation(r, p.getLocation());
+                Msg.send(p, "&a表彰台 " + r + "位 を設定しました");
+            }
+            Sfx.success(p);
+            return;
+        }
+
         switch (act) {
+            case "open_kitgui" -> KitGui.openList(plugin, p);
+            case "open_perm_gui" -> {
+                if (p.isOp()) KitPermGui.open(plugin, p);
+                else Msg.send(p, "&cこの機能はOP権限が必要です");
+            }
+            case "toggle_vote_items" -> {
+                boolean next = !VoteMenu.isVoteItemsEnabled();
+                VoteMenu.setVoteItemsEnabled(plugin, next);
+                render();
+            }
+            case "match_control" -> {
+                if (left) {
+                    p.closeInventory();
+                    if (!plugin.lobby().forceStart(null)) Msg.send(p, "&c開始できません (試合中 または 人数不足)");
+                    else Msg.send(p, "&a試合を開始します！");
+                } else {
+                    if (plugin.match() != null) {
+                        plugin.match().abort();
+                        Msg.send(p, "&e試合を中止しました");
+                    } else {
+                        Msg.send(p, "&7進行中の試合はありません");
+                    }
+                }
+            }
             case "newarena" -> {
                 int i = 1;
                 while (plugin.arenas().get("randomizer" + i) != null) i++;
                 Arena a = plugin.arenas().create("randomizer" + i, "randomizer");
                 Location l = p.getLocation();
                 a.worldName = l.getWorld().getName();
-                a.cx = l.getBlockX();
-                a.cy = l.getBlockY();
-                a.cz = l.getBlockZ();
+                a.cx = l.getBlockX(); a.cy = l.getBlockY(); a.cz = l.getBlockZ();
                 ArenaBuilder.build(a);
                 a.map = null;
                 a.enabled = false;
                 plugin.arenas().save();
                 p.teleport(a.center().add(0, 1, 0));
                 Msg.send(p, "&aアリーナ &e" + a.id + " &aを生成しました (スポーン16個)");
-                Msg.send(p, "&6編集中です。準備ができたらアリーナ一覧で右クリック (または /wars arena enable " + a.id + ")");
                 Sfx.success(p);
-                render();
-            }
-            case "main" -> open(plugin, p, Page.MAIN);
-            case "arenas" -> open(plugin, p, Page.ARENAS);
-            case "setlobby" -> {
-                plugin.setLobbyLocation(p.getLocation());
-                Msg.send(p, "&aロビー地点を設定しました");
-                Sfx.success(p);
-            }
-            case "sethologram" -> {
-                plugin.setHologramLocation(p.getLocation().add(0, 2.5, 0));
-                plugin.holograms().refresh();
-                Msg.send(p, "&aランキングホログラムを設定しました");
-                Sfx.success(p);
-            }
-            case "start" -> {
-                p.closeInventory();
-                if (!plugin.lobby().forceStart(null)) Msg.send(p, "&c開始できません (試合中/対象プレイヤーなし)");
-            }
-            case "stop" -> {
-                if (plugin.match() != null) {
-                    plugin.match().abort();
-                    Msg.send(p, "&e試合を中止しました");
-                } else {
-                    Msg.send(p, "&7進行中の試合はありません");
-                }
+                open(plugin, p, Page.ARENA_SETTINGS, a.id);
             }
             case "reload" -> {
                 plugin.reloadAll();
-                Msg.send(p, "&a再読込しました");
+                Msg.send(p, "&a全設定・データを再読み込みしました");
                 render();
             }
             case "close" -> p.closeInventory();
-            default -> {
-                if (act.startsWith("setpodium:")) {
-                    int r = Integer.parseInt(act.substring(10));
-                    plugin.setPodiumLocation(r, p.getLocation());
-                    Msg.send(p, "&a表彰台 " + r + "位 を設定しました");
-                    Sfx.success(p);
-                }
-            }
         }
     }
 }

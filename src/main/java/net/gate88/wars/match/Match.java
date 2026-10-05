@@ -68,7 +68,11 @@ public final class Match {
 
         List<Player> list = new ArrayList<>(participants);
         Collections.shuffle(list);
-        int count = mode.teamCount();
+
+        // ★ アリーナで指定されたチーム数・チームサイズを最優先 (未設定0ならモード設定)
+        int count = arena.maxTeams > 0 ? arena.maxTeams : mode.teamCount();
+        int size = arena.teamSize > 0 ? arena.teamSize : mode.teamSize();
+
         if (count > 0) {
             int n = Math.max(1, Math.min(count, list.size()));
             for (int i = 0; i < n; i++) teams.add(new MatchTeam(i, Colors.ALL.get(i % Colors.ALL.size())));
@@ -82,7 +86,6 @@ public final class Match {
         } else {
             List<DyeColor> colors = new ArrayList<>(Colors.ALL);
             Collections.shuffle(colors);
-            int size = mode.teamSize();
             MatchTeam cur = null;
             for (int i = 0; i < list.size(); i++) {
                 if (i % size == 0) {
@@ -142,17 +145,27 @@ public final class Match {
         plugin.podium().clear();
         plugin.clearTrackedTridents();
         cleanWorldEntities();
-        List<Pos> spawns = new ArrayList<>(arena.spawns);
-        Collections.shuffle(spawns);
+
+        // ★ チーム番号に対応したスポーン地点に確実にテレポート（シャッフルなし）
         for (MatchTeam t : teams) {
-            Pos sp = spawns.get(t.index % spawns.size());
+            Pos sp = !arena.spawns.isEmpty()
+                    ? arena.spawns.get(t.index % arena.spawns.size())
+                    : Pos.of(arena.center() != null ? arena.center() : new Location(world, 0, 64, 0));
+
             int idx = 0;
             for (MatchPlayer mp : t.members) {
                 Player p = mp.player();
                 if (p == null) continue;
                 prepare(p);
-                p.teleport(sp.toLocation(world).add((idx % 3) - 1.0, 0, (idx / 3) * 1.0));
+
+                // チームメンバーが複数人いる場合は重ならないよう少しずらす
+                Location spawnLoc = sp.toLocation(world);
+                if (idx > 0) {
+                    spawnLoc.add((idx % 3) - 1.0, 0, (idx / 3) * 1.0);
+                }
+                p.teleport(spawnLoc);
                 idx++;
+
                 Msg.title(p, "&e&l" + mode.displayName, "&7" + mode.graceSeconds() + "秒後に装備が配布されます", 5, 50, 10);
                 p.playSound(p.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 0.4f, 1.2f);
                 Msg.send(p, "あなたの色: " + Colors.code(t.color) + "&l" + Colors.en(t.color));
@@ -161,7 +174,6 @@ public final class Match {
         mode.onStart(this);
         updateSidebars();
 
-        // テレポート＆サイドバー初期化直後に、頭上ネームタグとタブリスト表示を全プレイヤーに確実に適用
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             for (MatchTeam t : teams) {
                 for (MatchPlayer mp : t.members) {
@@ -416,7 +428,6 @@ public final class Match {
                 world.strikeLightningEffect(strikeLoc);
             }
 
-            // ★ キルログも色名を太字 (&l) に設定
             broadcastToMatch(Colors.code(victim.team.color) + "&l" + Colors.en(victim.team.color) + " &f" + victim.name
                     + " &7は " + Colors.code(killer.team.color) + "&l" + Colors.en(killer.team.color) + " &f" + killer.name + " &7に倒された");
         } else {
