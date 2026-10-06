@@ -41,12 +41,18 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
     }
 
     private static final List<String> ADMIN_SUBS = List.of("admin", "adomin", "kit", "start", "stop", "setlobby", "sethologram",
-            "setpodium", "arena", "map", "setpoints", "addpoints", "reload");
+            "setpodium", "arena", "map", "setpoints", "addpoints", "tempop", "reload");
     private static final List<String> PUBLIC_SUBS = List.of("help", "vote", "top", "points");
 
     @Override
     public boolean onCommand(CommandSender s, Command cmd, String label, String[] a) {
         String cmdName = cmd.getName().toLowerCase();
+
+        // ★ 一時OPコマンド (/tempop <player>)
+        if (cmdName.equals("tempop")) {
+            handleTempOp(s, a);
+            return true;
+        }
 
         if (cmdName.equals("kitsuggest")) {
             if (!(s instanceof Player p)) return true;
@@ -60,7 +66,12 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        // ★ /kit コマンド (OP非所持者は完全に拒否)
         if (cmdName.equals("kit")) {
+            if (!s.isOp()) {
+                Msg.send(s, "&cこのコマンドはOP権限を持つプレイヤーのみ使用できます");
+                return true;
+            }
             if (!(s instanceof Player p)) {
                 Msg.send(s, "ゲーム内で実行してください");
                 return true;
@@ -120,11 +131,12 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         String sub = a[0].toLowerCase();
-        if (ADMIN_SUBS.contains(sub) && !s.hasPermission("wars.admin")) {
+        if (ADMIN_SUBS.contains(sub) && !s.hasPermission("wars.admin") && !s.isOp()) {
             Msg.send(s, "&c権限がありません");
             return true;
         }
         switch (sub) {
+            case "tempop" -> handleTempOp(s, Arrays.copyOfRange(a, 1, a.length));
             case "vote" -> {
                 if (a.length >= 2 && a[1].equalsIgnoreCase("toggle")) {
                     if (!s.hasPermission("wars.admin") && !s.isOp()) {
@@ -141,6 +153,11 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             case "top" -> top(s);
             case "points" -> points(s, a);
             case "kit" -> {
+                // ★ OP非所持者は完全に拒否
+                if (!s.isOp()) {
+                    Msg.send(s, "&cこのコマンドはOP権限を持つプレイヤーのみ使用できます");
+                    return true;
+                }
                 if (!(s instanceof Player p)) {
                     Msg.send(s, "ゲーム内で実行してください");
                     return true;
@@ -231,6 +248,40 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    /** ★ 一時OPコマンド処理 (/tempop <player>) */
+    private void handleTempOp(CommandSender s, String[] a) {
+        if (!s.isOp()) {
+            Msg.send(s, "&cこのコマンドはOP権限が必要です");
+            return;
+        }
+        if (!(s instanceof Player granter)) {
+            Msg.send(s, "ゲーム内のOPプレイヤーが実行してください");
+            return;
+        }
+        if (a.length < 1) {
+            Msg.send(granter, "&c使用方法: /tempop <プレイヤー名>");
+            return;
+        }
+        Player target = Bukkit.getPlayerExact(a[0]);
+        if (target == null) {
+            Msg.send(granter, "&cプレイヤーが見つかりません (オンラインのプレイヤーを指定してください)");
+            return;
+        }
+        if (target.equals(granter)) {
+            Msg.send(granter, "&c自分自身には付与できません");
+            return;
+        }
+        if (target.isOp() && !plugin.isTempOp(target.getUniqueId())) {
+            Msg.send(granter, "&e" + target.getName() + " は既に通常のOPを所持しています");
+            return;
+        }
+
+        plugin.grantTempOp(granter.getUniqueId(), target);
+        Msg.send(granter, "&a" + target.getName() + " に一時的なOPを付与しました！ &7(あなたがログアウトすると自動で剥奪されます)");
+        Msg.send(target, "&6&l[通知] &b" + granter.getName() + " &aから一時的なOPが付与されました！ &7(付与者がログアウトすると自動で解除されます)");
+        Sfx.success(granter);
+    }
+
     private void handleKitCommand(Player p, String[] a) {
         if (a.length == 0) {
             KitGui.openList(plugin, p);
@@ -251,7 +302,6 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         }
 
         if (sub.equals("vote") && a.length >= 2 && a[1].equalsIgnoreCase("toggle")) {
-            if (!p.isOp() && !p.hasPermission("wars.admin")) return;
             boolean next = !VoteMenu.isVoteItemsEnabled();
             VoteMenu.setVoteItemsEnabled(plugin, next);
             Msg.send(p, "&e投票アイテムの配布状態: " + (next ? "&a有効 (配布中)" : "&c無効 (停止中)"));
@@ -259,18 +309,10 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         }
 
         if (sub.equals("perm")) {
-            if (!p.isOp()) {
-                Msg.send(p, "&cこの機能はOP権限を持っているプレイヤーのみ利用できます");
-                Sfx.deny(p);
-                return;
-            }
-
             if (a.length == 1 || a[1].equalsIgnoreCase("list")) {
                 KitPermGui.open(plugin, p);
                 return;
             }
-
-            // ★ クリエイティブ化禁止コマンド: /kit perm block|unblock <player>
             if (a[1].equalsIgnoreCase("block") || a[1].equalsIgnoreCase("unblock")) {
                 if (a.length < 3) {
                     Msg.send(p, "&c使用方法: /kit perm <block|unblock> <player>");
@@ -281,7 +323,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 Player tOnline = Bukkit.getPlayerExact(tName);
                 OfflinePlayer tOp = tOnline != null ? tOnline : Bukkit.getOfflinePlayer(tName);
                 plugin.kits().setCreativeBlocked(tOp.getUniqueId(), tOp.getName(), block);
-                Msg.send(p, "&e" + tName + " &fのクリエイティブ化コマンド使用を &c" + (block ? "【禁止】" : "【許可】") + " &fに設定しました");
+                Msg.send(p, "&e" + tName + " &fのクリエイティブ化コマンド使用を &c" + (block ? "【禁止】" : "【許可】") + " &fにしました");
                 Sfx.success(p);
                 return;
             }
@@ -314,7 +356,6 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         }
 
         if (sub.equals("area")) {
-            if (!p.isOp() && !p.hasPermission("wars.admin")) return;
             if (a.length < 2) {
                 Msg.send(p, "&c/kit area <pos1|pos2|clear|info>");
                 return;
@@ -349,23 +390,17 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         KitGui.openList(plugin, p);
     }
 
-    /** 一般向けKit提案処理 */
     private void handleKitSuggest(Player p, String[] a) {
-        // ★ 条件1: サーバー内にOPが1人以上オンラインであること
         if (!plugin.kits().isOpOnline()) {
             Msg.send(p, "&c現在OP権限を持つプレイヤーがオンラインにいないため、Kitの提案・制作はできません");
             Sfx.deny(p);
             return;
         }
-
-        // ★ 条件2: クリエイティブ化禁止リストに入っていないか
         if (plugin.kits().isCreativeBlocked(p.getUniqueId())) {
             Msg.send(p, "&cあなたはこのコマンドの使用が禁止されています");
             Sfx.deny(p);
             return;
         }
-
-        // ★ 条件3: Kit制作エリア内にいること
         if (!plugin.kits().isInKitArea(p.getLocation())) {
             Msg.send(p, "&cKit制作エリアの中で実行してください");
             Sfx.deny(p);
@@ -381,7 +416,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
 
         if (a[0].equalsIgnoreCase("start")) {
             p.setGameMode(GameMode.CREATIVE);
-            plugin.kits().startSuggesting(p); // ★ 移動監視＆押し出し防止開始
+            plugin.kits().startSuggesting(p);
             Msg.send(p, "&a[Kit提案] 制作モード(Creative)になりました。インベントリを開いて装備を組んでください。");
             Msg.send(p, "&c&l【警告】その場から動くと強制的にモード解除＆全アイテム消去されます！");
             Sfx.success(p);
@@ -391,21 +426,18 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         String kitName = a[0];
         String category = a.length > 1 ? a[1] : "その他";
 
-        // 重複チェック
         if (plugin.kits().exists(kitName) || plugin.kits().isSuggested(kitName)) {
             Msg.send(p, "&cそのKit名 (" + kitName + ") は既に存在するか、他者が提案中です。別の名前にしてください。");
             Sfx.deny(p);
             return;
         }
 
-        // 1人10個制限
         if (plugin.kits().getPlayerSuggestionCount(p.getUniqueId()) >= 10) {
             Msg.send(p, "&c提案中のKitが上限 (10個) に達しています。OPの審査をお待ちください。");
             Sfx.deny(p);
             return;
         }
 
-        // 提出完了
         plugin.kits().suggestKit(p, kitName, category);
         plugin.kits().stopSuggesting(p);
         p.getInventory().clear();
@@ -452,13 +484,14 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         s.sendMessage(Msg.c("&7/wars top &f- 累計ポイントTOP10"));
         s.sendMessage(Msg.c("&7/wars points [name] &f- 累計ポイント"));
         s.sendMessage(Msg.c("&7/kit suggest <名前> &f- Kitの提案 (要OPオンライン)"));
-        if (s.hasPermission("wars.admin") || s.isOp()) {
-            s.sendMessage(Msg.c("&6[管理] &7/wars admin &f- 総合管理ダッシュボードGUI"));
-            s.sendMessage(Msg.c("&6[管理] &7/kit &f- Kit一覧・管理GUI"));
-            s.sendMessage(Msg.c("&6[管理] &7/kit review &f- 提案Kit審査GUI"));
-            s.sendMessage(Msg.c("&6[管理] &7/kit perm &f- Kit権限管理GUI (OP限定)"));
-            s.sendMessage(Msg.c("&6[管理] &7/kit perm block|unblock <player> &f- クリエイティブ化禁止"));
-            s.sendMessage(Msg.c("&6[管理] &7/kit area pos1|pos2|clear &f- Kit制作エリアの設定"));
+        if (s.isOp()) {
+            s.sendMessage(Msg.c("&6[OP] &7/tempop <player> &f- ログアウト時に自動剥奪される一時OP付与"));
+            s.sendMessage(Msg.c("&6[OP] &7/wars admin &f- 総合管理ダッシュボードGUI"));
+            s.sendMessage(Msg.c("&6[OP] &7/kit &f- Kit一覧・管理GUI"));
+            s.sendMessage(Msg.c("&6[OP] &7/kit review &f- 提案Kit審査GUI"));
+            s.sendMessage(Msg.c("&6[OP] &7/kit area pos1|pos2|clear &f- Kit制作エリアの設定"));
+            s.sendMessage(Msg.c("&6[OP] &7/kit perm &f- Kit権限管理GUI (OP限定)"));
+            s.sendMessage(Msg.c("&6[OP] &7/wars arena createchild <親id> <子id> &f- 子アリーナ作成"));
         }
     }
 
@@ -484,17 +517,16 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
 
     private void arena(CommandSender s, String[] a) {
         if (a.length < 2) {
-            Msg.send(s, "&c/wars arena create|build|paste|addspawn|setspawn|setteams|setteamsize|addbreak|removebreak|clearbreak|enable|disable|delete|tp|list");
+            Msg.send(s, "&c/wars arena create|createchild|build|paste|addspawn|setspawn|setteams|setteamsize|addbreak|removebreak|clearbreak|enable|disable|delete|tp|list");
             return;
         }
         String op = a[1].toLowerCase();
         if (op.equals("list")) {
             for (Arena ar : plugin.arenas().all()) {
-                s.sendMessage(Msg.c((ar.isReady() ? "&a" : "&c") + ar.id + (ar.enabled ? "" : " &6[編集中]") + " &7mode=" + ar.modeId
-                        + " world=" + ar.worldName + " center=" + ar.cx + "," + ar.cy + "," + ar.cz + " spawns=" + ar.spawns.size()
-                        + " teams=" + (ar.maxTeams == 0 ? "auto" : ar.maxTeams) + " teamSize=" + (ar.teamSize == 0 ? "auto" : ar.teamSize)
-                        + " breakBlocks=" + ar.breakOnStart.size()
-                        + (ar.map != null ? " map=" + ar.map : "")));
+                s.sendMessage(Msg.c((ar.isReady() ? "&a" : "&c") + ar.id + (ar.enabled ? "" : " &6[編集中]")
+                        + (ar.isChild() ? " &d[子:親=" + ar.parentId + "]" : " &b[親]")
+                        + " &7mode=" + ar.modeId + " world=" + ar.worldName + " center=" + ar.cx + "," + ar.cy + "," + ar.cz
+                        + " spawns=" + ar.spawns.size()));
             }
             return;
         }
@@ -520,6 +552,28 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 plugin.arenas().save();
                 Msg.send(s, "&aアリーナ作成: 中心=" + ar.cx + "," + ar.cy + "," + ar.cz);
                 sendEditing(s, ar);
+            }
+            // ★ 子アリーナ作成コマンド (/wars arena createchild <親id> <子id>)
+            case "createchild" -> {
+                if (p == null) return;
+                if (a.length < 4) {
+                    Msg.send(p, "&c使用方法: /wars arena createchild <親アリーナid> <子アリーナid>");
+                    return;
+                }
+                String parentId = a[2];
+                String childId = a[3];
+                Arena child = plugin.arenas().createChild(parentId, childId);
+                if (child == null) {
+                    Msg.send(p, "&c親アリーナが見つかりません: " + parentId);
+                    return;
+                }
+                Location l = p.getLocation();
+                child.worldName = l.getWorld().getName();
+                child.cx = l.getBlockX(); child.cy = l.getBlockY(); child.cz = l.getBlockZ();
+                child.enabled = false;
+                plugin.arenas().save();
+                Msg.send(p, "&a親 &e" + parentId + " &aの下位に子アリーナ &b" + childId + " &aを作成しました！ (設定は親と自動同期されます)");
+                sendEditing(p, child);
             }
             case "build" -> {
                 Arena ar = plugin.arenas().get(id);
@@ -611,6 +665,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 Arena ar = plugin.arenas().get(id);
                 if (ar == null || p == null) return;
                 ItemStack hand = p.getInventory().getItemInMainHand();
+                if (hand.getType().isAir()) return;
                 ar.removeBreakBlock(hand.getType());
                 plugin.arenas().save();
                 Msg.send(p, "&e自動破壊ブロックから解除しました");
@@ -666,6 +721,13 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         List<String> out = new ArrayList<>();
         String cmdName = cmd.getName().toLowerCase();
 
+        if (cmdName.equals("tempop")) {
+            if (a.length == 1 && s.isOp()) {
+                for (Player online : Bukkit.getOnlinePlayers()) out.add(online.getName());
+            }
+            return out;
+        }
+
         if (cmdName.equals("kit") || cmdName.equals("kitsuggest")) {
             completeKitArgs(s, a, out);
             String last = a[a.length - 1].toLowerCase();
@@ -676,6 +738,8 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         if (a.length == 1) {
             out.addAll(PUBLIC_SUBS);
             if (s.hasPermission("wars.admin") || s.isOp()) out.addAll(ADMIN_SUBS);
+        } else if (a.length == 2 && a[0].equalsIgnoreCase("arena")) {
+            out.addAll(List.of("create", "createchild", "build", "paste", "addspawn", "setspawn", "setteams", "setteamsize", "addbreak", "removebreak", "clearbreak", "clearspawns", "enable", "disable", "delete", "tp", "list"));
         }
         return out;
     }
@@ -688,13 +752,6 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             }
         } else if (kitArgs.length == 2 && kitArgs[0].equalsIgnoreCase("suggest")) {
             out.add("start");
-        } else if (kitArgs.length == 2 && kitArgs[0].equalsIgnoreCase("perm") && s.isOp()) {
-            out.addAll(List.of("add", "remove", "block", "unblock", "list"));
-        } else if (kitArgs.length == 3 && kitArgs[0].equalsIgnoreCase("perm") && s.isOp()) {
-            for (Player online : Bukkit.getOnlinePlayers()) out.add(online.getName());
-        } else if (kitArgs.length == 4 && kitArgs[0].equalsIgnoreCase("perm") && s.isOp()
-                && (kitArgs[1].equalsIgnoreCase("add") || kitArgs[1].equalsIgnoreCase("remove"))) {
-            out.addAll(List.of("create", "creative"));
         }
     }
 }

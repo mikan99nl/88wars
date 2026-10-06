@@ -16,11 +16,15 @@ commands:
     description: Create and save a kit from player inventory
   kit:
     description: Kit management GUI and settings
+    permission: wars.admin
   kitsuggest:
     description: Suggest a new kit
     aliases: [suggestkit]
   kitreview:
     description: Review suggested kits
+    permission: wars.admin
+  tempop:
+    description: Grant temporary OP that revokes on logout
     permission: wars.admin
 
 permissions:

@@ -46,6 +46,10 @@ public final class WarsPlugin extends JavaPlugin {
     private final Set<UUID> trackedTridents = new HashSet<>();
     private Match match;
 
+    // ★ 一時OP管理: Map<付与元UUID, Set<付与先UUID>>
+    private final Map<UUID, Set<UUID>> tempOpsByGranter = new HashMap<>();
+    private final Set<UUID> allTempOps = new HashSet<>();
+
     @Override
     public void onEnable() {
         saveDefaultConfig();
@@ -75,12 +79,10 @@ public final class WarsPlugin extends JavaPlugin {
             getCommand("createkit").setExecutor(cmd);
             getCommand("createkit").setTabCompleter(cmd);
         }
-        // ★ /kit コマンドを登録
         if (getCommand("kit") != null) {
             getCommand("kit").setExecutor(cmd);
             getCommand("kit").setTabCompleter(cmd);
         }
-        // WarsPlugin.java の onEnable 内に追加
         if (getCommand("kitsuggest") != null) {
             getCommand("kitsuggest").setExecutor(cmd);
             getCommand("kitsuggest").setTabCompleter(cmd);
@@ -102,6 +104,15 @@ public final class WarsPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        // ★ サーバー終了時にすべての一時OPを解除
+        for (UUID u : new HashSet<>(allTempOps)) {
+            Player p = Bukkit.getPlayer(u);
+            if (p != null) p.setOp(false);
+            else Bukkit.getOfflinePlayer(u).setOp(false);
+        }
+        allTempOps.clear();
+        tempOpsByGranter.clear();
+
         clearTrackedTridents();
         lobby.stop();
         if (match != null) match.abort();
@@ -125,7 +136,35 @@ public final class WarsPlugin extends JavaPlugin {
         holograms.refresh();
     }
 
-    // ------------------------------------------------------------ trident tracking
+    // ------------------------------------------------ 一時OPシステム
+    public void grantTempOp(UUID granter, Player target) {
+        target.setOp(true);
+        tempOpsByGranter.computeIfAbsent(granter, k -> new HashSet<>()).add(target.getUniqueId());
+        allTempOps.add(target.getUniqueId());
+    }
+
+    public boolean isTempOp(UUID uuid) {
+        return allTempOps.contains(uuid);
+    }
+
+    /** 付与元が退出した際に、その人が付与した一時OPをすべて自動剥奪 */
+    public void onGranterQuit(UUID granter) {
+        Set<UUID> targets = tempOpsByGranter.remove(granter);
+        if (targets != null) {
+            for (UUID u : targets) {
+                allTempOps.remove(u);
+                Player p = Bukkit.getPlayer(u);
+                if (p != null) {
+                    p.setOp(false);
+                    p.sendMessage("§c付与元のプレイヤーがログアウトしたため、一時的なOPが剥奪されました。");
+                } else {
+                    Bukkit.getOfflinePlayer(u).setOp(false);
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------ trident tracking
     public void trackTrident(UUID uuid) {
         if (uuid != null) trackedTridents.add(uuid);
     }
@@ -140,7 +179,7 @@ public final class WarsPlugin extends JavaPlugin {
         trackedTridents.clear();
     }
 
-    // ------------------------------------------------------------ accessors
+    // ------------------------------------------------ accessors
     public ArenaManager arenas() { return arenas; }
     public MapStore maps() { return maps; }
     public PointsManager points() { return points; }
@@ -152,10 +191,7 @@ public final class WarsPlugin extends JavaPlugin {
     public YamlConfiguration data() { return data; }
     public Match match() { return match; }
 
-    public void setMatch(Match m) {
-        this.match = m;
-    }
-
+    public void setMatch(Match m) { this.match = m; }
     public void matchClosed(Match m) {
         if (this.match == m) this.match = null;
         lobby.onMatchClosed();
@@ -170,7 +206,7 @@ public final class WarsPlugin extends JavaPlugin {
         sidebars.remove(p.getUniqueId());
     }
 
-    // ------------------------------------------------------------ data.yml
+    // ------------------------------------------------ data.yml
     private void loadData() {
         getDataFolder().mkdirs();
         dataFile = new File(getDataFolder(), "data.yml");

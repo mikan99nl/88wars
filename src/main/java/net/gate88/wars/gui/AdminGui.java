@@ -24,7 +24,6 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.jetbrains.annotations.NotNull;
 
-/** 管理者用総合設定GUI (/wars admin) */
 public final class AdminGui implements InventoryHolder {
     public enum Page {
         MAIN,
@@ -32,7 +31,7 @@ public final class AdminGui implements InventoryHolder {
         MODE_SETTINGS,
         ARENAS,
         ARENA_SETTINGS,
-        ARENA_TIMING_SETTINGS, // ★ アリーナ個別時間・ルール設定ページ
+        ARENA_TIMING_SETTINGS,
         LOBBY_SETTINGS,
         LOCATIONS,
         POINTS_SETTINGS
@@ -85,7 +84,6 @@ public final class AdminGui implements InventoryHolder {
         return item(m, name, lore, false);
     }
 
-    // ★ 設定が有効な場合にエンチャントで光らせる (glow)
     private ItemStack item(Material m, String name, List<String> lore, boolean glow) {
         ItemStack it = new ItemStack(m);
         ItemMeta meta = it.getItemMeta();
@@ -128,10 +126,9 @@ public final class AdminGui implements InventoryHolder {
         }
     }
 
-    // ------------------------------------------------ ① メインダッシュボード (MAIN)
     private void renderMain() {
         put(10, item(Material.DIAMOND_SWORD, "&e&l【ゲームモード設定】", List.of("&7各モードの試合時間・猶予時間・ルール等を設定", "&eクリックして開く")), "page:MODES");
-        put(12, item(Material.GRASS_BLOCK, "&a&l【アリーナ管理】", List.of("&7アリーナ一覧・TP・チーム数・スポーン・生成", "&eクリックして開く")), "page:ARENAS");
+        put(12, item(Material.GRASS_BLOCK, "&a&l【アリーナ管理】", List.of("&7アリーナ一覧・親子設定・スポーン・生成", "&eクリックして開く")), "page:ARENAS");
         put(14, item(Material.CHEST, "&6&l【Kit管理・作成】", List.of("&7Kit一覧・編集・ポーション効果設定 (/kit)", "&eクリックして開く")), "open_kitgui");
         put(16, item(Material.PLAYER_HEAD, "&b&l【Kit権限管理】 &c[OP限定]", List.of("&7誰がKit追加/クリエイティブ権限を持つか管理 (/kit perm)", "&eクリックして開く")), "open_perm_gui");
 
@@ -144,7 +141,6 @@ public final class AdminGui implements InventoryHolder {
         put(53, item(Material.BARRIER, "&c閉じる", List.of()), "close");
     }
 
-    // ------------------------------------------------ ② ゲームモード選択 (MODES)
     private void renderModes() {
         int slot = 10;
         for (WarsMode m : plugin.modes().all()) {
@@ -154,8 +150,8 @@ public final class AdminGui implements InventoryHolder {
             lore.add("");
             lore.add("&7状態: " + (enabled ? "&a有効" : "&c無効"));
             lore.add("&7試合時間: &f" + m.durationSeconds() + "秒");
+            lore.add("&7ブロック開放時間: &e" + m.breakDelaySeconds() + "秒");
             lore.add("&7猶予時間: &f" + m.graceSeconds() + "秒");
-            lore.add("&7チーム数: &f" + (m.teamCount() > 0 ? m.teamCount() : "自動") + " / チーム人数: &f" + m.teamSize());
             lore.add("");
             lore.add("&eクリックして詳細設定を変更");
 
@@ -167,13 +163,14 @@ public final class AdminGui implements InventoryHolder {
         put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
 
-    // ------------------------------------------------ ③ モード個別詳細設定 (MODE_SETTINGS)
     private void renderModeSettings() {
         if (targetId == null) { renderModes(); return; }
         String prefix = "modes." + targetId + ".";
 
         List<Num> modeNums = List.of(
                 new Num(prefix + "duration-seconds", "試合時間(秒)", Material.CLOCK, 30, 30, 900, true, 180),
+                // ★ 大元設定の拡張: 開始からブロック破壊までの秒数
+                new Num(prefix + "break-delay-seconds", "ブロック開放までの待機(秒)", Material.IRON_BARS, 1, 0, 60, true, 0),
                 new Num(prefix + "grace-seconds", "装備配布までの猶予(秒)", Material.CHEST, 1, 0, 30, true, 5),
                 new Num(prefix + "block-decay-seconds", "設置ブロック崩壊(秒)", Material.WHITE_WOOL, 1, 0, 60, true, 12),
                 new Num(prefix + "min-players", "最低必要人数", Material.PLAYER_HEAD, 1, 1, 16, true, 2),
@@ -220,7 +217,6 @@ public final class AdminGui implements InventoryHolder {
         put(49, item(Material.ARROW, "&fモード選択に戻る", List.of()), "page:MODES");
     }
 
-    // ------------------------------------------------ ④ アリーナ一覧 (ARENAS)
     private void renderArenas() {
         int slot = 0;
         for (Arena a : plugin.arenas().all()) {
@@ -228,63 +224,68 @@ public final class AdminGui implements InventoryHolder {
             WarsMode md = plugin.modes().get(a.modeId);
             boolean timingCustom = a.customTimingEnabled;
 
+            List<String> lore = new ArrayList<>();
+            lore.add("&7モード: &f" + (md == null ? a.modeId : md.displayName));
+            lore.add("&7状態: " + (a.enabled ? "&a有効" : "&6編集中"));
+            if (a.isChild()) {
+                lore.add("&d★ 子アリーナ (親: " + a.parentId + ")");
+                lore.add("&7※親アリーナの設定を参照・同期中");
+            } else {
+                lore.add("&b★ 親アリーナ (子: " + a.childIds.size() + "個)");
+            }
+            lore.add("&7中心: &f" + a.cx + ", " + a.cy + ", " + a.cz);
+            lore.add("&7スポーン地点数: &f" + a.spawns.size() + "個");
+            lore.add("");
+            lore.add("&e左クリック: &fアリーナ設定・子アリーナ管理を開く");
+            lore.add("&b右クリック: &fアリーナへテレポート");
+
             put(slot++, item(a.isReady() ? Material.GRASS_BLOCK : Material.DEAD_BUSH,
-                    (a.isReady() ? "&a" : "&c") + a.id,
-                    List.of("&7モード: &f" + (md == null ? a.modeId : md.displayName),
-                            "&7状態: " + (a.enabled ? "&a有効" : "&6編集中 (試合に使われない)"),
-                            "&7中心: &f" + a.cx + ", " + a.cy + ", " + a.cz,
-                            "&7チーム数設定: &e" + (a.maxTeams == 0 ? "自動(モード準拠)" : a.maxTeams + "チーム"),
-                            "&7チーム人数設定: &e" + (a.teamSize == 0 ? "自動(モード準拠)" : a.teamSize + "人"),
-                            "&7個別時間設定: " + (timingCustom ? "&a有効 (上書き中)" : "&7無効 (大元準拠)"),
-                            "&7自動破壊ブロック数: &b" + a.breakOnStart.size() + "個",
-                            "&7スポーン地点数: &f" + a.spawns.size() + "個",
-                            "",
-                            "&e左クリック: &fアリーナ個別設定・編集を開く",
-                            "&b右クリック: &fアリーナへテレポート"), timingCustom), "arena_select:" + a.id);
+                    (a.isReady() ? "&a" : "&c") + a.id, lore, a.isChild() || timingCustom), "arena_select:" + a.id);
         }
 
-        put(45, item(Material.EMERALD, "&a現在地に Randomizer アリーナを新規自動生成",
-                List.of("&7id は自動採番 (randomizer1, 2, ...)", "&c61x61 の範囲の地形を上書きします!")), "newarena");
+        put(45, item(Material.EMERALD, "&a現在地に親アリーナを新規自動生成", List.of("&7id は自動採番 (randomizer1, 2, ...)")), "newarena");
         put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
 
-    // ------------------------------------------------ ⑤ アリーナ詳細・個別設定 (ARENA_SETTINGS)
     private void renderArenaSettings() {
         if (targetId == null) { renderArenas(); return; }
         Arena a = plugin.arenas().get(targetId);
         if (a == null) { renderArenas(); return; }
 
-        put(4, item(a.isReady() ? Material.GRASS_BLOCK : Material.DEAD_BUSH, "&e&lアリーナ: " + a.id,
-                List.of("&7ワールド: &f" + a.worldName, "&7中心座標: &f" + a.cx + ", " + a.cy + ", " + a.cz)), null);
+        List<String> infoLore = new ArrayList<>();
+        infoLore.add("&7ワールド: &f" + a.worldName);
+        infoLore.add("&7中心座標: &f" + a.cx + ", " + a.cy + ", " + a.cz);
+        if (a.isChild()) {
+            infoLore.add("&d★ 子アリーナ (親アリーナ: " + a.parentId + " の設定を同期中)");
+        } else {
+            infoLore.add("&b★ 親アリーナ (登録されている子アリーナ: " + a.childIds.size() + "個)");
+        }
+        put(4, item(a.isReady() ? Material.GRASS_BLOCK : Material.DEAD_BUSH, "&e&lアリーナ: " + a.id, infoLore), null);
 
         put(19, item(Material.ENDER_PEARL, "&bアリーナの中心へテレポート", List.of("&7中心座標へワープします")), "atp:" + a.id);
         put(21, item(a.enabled ? Material.LIME_DYE : Material.GRAY_DYE,
                 a.enabled ? "&a【有効中】 (試合で使用されます)" : "&6【編集中】 (試合で使用されません)",
                 List.of("&7クリックで 有効 / 編集中 を切り替え")), "atog_enabled:" + a.id);
 
-        // ★ アリーナ個別時間・ルール設定ページへの遷移ボタン
         put(22, item(Material.CLOCK, "&e&l【アリーナ個別時間・ルール設定】",
-                List.of(
-                        (a.customTimingEnabled ? "&a● 個別設定: 有効中 (大元設定を上書き)" : "&7● 個別設定: 無効中 (大元設定を使用)"),
-                        "",
-                        "&7・ブロック破壊待機: &f" + a.breakDelaySeconds + "秒",
-                        "&7・破壊後アイテム配布: &f" + a.customGraceSeconds + "秒",
-                        "&7・試合時間: &f" + (a.customDurationSeconds > 0 ? a.customDurationSeconds + "秒" : "自動(モード準拠)"),
-                        "&7・設置ブロック崩壊: &f" + (a.customBlockDecaySeconds > 0 ? a.customBlockDecaySeconds + "秒" : "自動(モード準拠)"),
-                        "",
-                        "&eクリックして開く"
-                ), a.customTimingEnabled), "page:ARENA_TIMING_SETTINGS:" + a.id);
+                List.of((a.customTimingEnabled ? "&a● 個別設定: 有効中" : "&7● 個別設定: 無効中 (大元設定を使用)"), "", "&eクリックして開く"), a.customTimingEnabled), "page:ARENA_TIMING_SETTINGS:" + a.id);
 
         put(23, item(Material.WHITE_BANNER, "&e最大チーム数: &6" + (a.maxTeams == 0 ? "自動(モード準拠)" : a.maxTeams + "チーム"),
-                List.of("&7左クリック: +1チーム", "&7右クリック: -1チーム", "&d[Qキー] 自動(0)にリセット")), "ateams:" + a.id);
+                List.of("&7左クリック: +1チーム", "&7右クリック: -1チーム", "&d[Qキー] リセット")), "ateams:" + a.id);
 
         put(25, item(Material.PLAYER_HEAD, "&e1チームの最大人数: &6" + (a.teamSize == 0 ? "自動(モード準拠)" : a.teamSize + "人"),
-                List.of("&7左クリック: +1人", "&7右クリック: -1人", "&d[Qキー] 自動(0)にリセット")), "ateamsize:" + a.id);
+                List.of("&7左クリック: +1人", "&7右クリック: -1人", "&d[Qキー] リセット")), "ateamsize:" + a.id);
 
         put(29, item(Material.BEACON, "&a現在地にチームスポーンを追加",
                 List.of("&7現在のスポーン数: &e" + a.spawns.size() + "個", "&7立っている位置を次のチームスポーン地点として登録")), "aaddspawn:" + a.id);
 
         put(31, item(Material.LAVA_BUCKET, "&c全スポーン地点を削除", List.of("&7登録されたスポーン座標をすべてクリアします")), "aclearspawns:" + a.id);
+
+        // ★ 親アリーナ用: 子アリーナ作成ボタン
+        if (!a.isChild()) {
+            put(32, item(Material.DISPENSER, "&d&l【子アリーナを現在地に作成】",
+                    List.of("&7親アリーナ &e" + a.id + " &7の設定を完全に同期する", "&7子アリーナを現在地を中心に新規作成します")), "acreate_child:" + a.id);
+        }
 
         put(33, item(Material.ANVIL, "&6現在地を中心にマップ再生成", List.of("&c現在地を中心に61x61のマップを再ビルドします")), "arebuild:" + a.id);
 
@@ -294,22 +295,18 @@ public final class AdminGui implements InventoryHolder {
             breakLore.add("&8(現在登録されているブロックはありません)");
         } else {
             breakLore.add("&c現在の登録ブロック:");
-            for (Material bm : a.breakOnStart) {
-                breakLore.add(" &7- &f" + bm.name());
-            }
+            for (Material bm : a.breakOnStart) breakLore.add(" &7- &f" + bm.name());
         }
         breakLore.add("");
-        breakLore.add("&e[左クリック] &f手に持っているブロックを追加");
-        breakLore.add("&b[右クリック] &f手に持っているブロックを解除");
-        breakLore.add("&d[Qキー(ドロップ)] &f登録ブロックを全消去");
+        breakLore.add("&e[左クリック] 手持ちブロックを追加");
+        breakLore.add("&b[右クリック] 手持ちブロックを解除");
+        breakLore.add("&d[Qキー] 全消去");
         put(35, item(Material.IRON_PICKAXE, "&c&l【開始時自動破壊ブロック設定】", breakLore), "abreak_block:" + a.id);
 
         put(40, item(Material.BARRIER, "&4&l【このアリーナを完全削除】", List.of("&7アリーナ登録を完全に抹消します")), "adelete:" + a.id);
-
         put(49, item(Material.ARROW, "&fアリーナ一覧に戻る", List.of()), "page:ARENAS");
     }
 
-    // ------------------------------------------------ ⑤-B アリーナ個別時間・ルール設定 (ARENA_TIMING_SETTINGS)
     private void renderArenaTimingSettings() {
         if (targetId == null) { renderArenas(); return; }
         Arena a = plugin.arenas().get(targetId);
@@ -317,70 +314,29 @@ public final class AdminGui implements InventoryHolder {
 
         boolean custom = a.customTimingEnabled;
 
-        // 個別設定の有効/無効トグル (有効時はエンチャント発光)
         put(10, item(custom ? Material.REPEATER : Material.LEVER,
                 custom ? "&a&l【個別カスタム時間: 有効中 (ON)】" : "&7&l【個別カスタム時間: 無効中 (OFF)】",
-                List.of(
-                        "&7有効にすると、大元設定を上書きして",
-                        "&7このアリーナ独自の時間設定が適用されます",
-                        "",
-                        "&e[クリック] 切り替え",
-                        "&d[Qキー] OFF にリセット"
-                ), custom), "atog_custom:" + a.id);
+                List.of("&7有効にすると、大元設定を上書きして", "&7このアリーナ独自の時間設定が適用されます", "", "&e[クリック] 切り替え", "&d[Qキー] OFF にリセット"), custom), "atog_custom:" + a.id);
 
-        // ブロック破壊までの秒数
         put(12, item(Material.IRON_BARS,
                 "&e開始時ブロック破壊までの秒数: &6" + a.breakDelaySeconds + "秒",
-                List.of(
-                        "&7試合開始から何秒後に指定ブロックを壊すか設定",
-                        "&7(0秒 = 試合開始と同時に即座に破壊)",
-                        "",
-                        "&7左クリック: +1秒",
-                        "&7右クリック: -1秒",
-                        "&7Shift: ×5",
-                        "&d[Qキー] 0秒にリセット"
-                ), custom && a.breakDelaySeconds > 0), "atime_break:" + a.id);
+                List.of("&7試合開始から何秒後に指定ブロックを壊すか設定", "&7(0秒 = 試合開始と同時に即座に破壊)", "", "&7左クリック: +1秒 / 右クリック: -1秒", "&d[Qキー] 0秒にリセット"), custom && a.breakDelaySeconds > 0), "atime_break:" + a.id);
 
-        // ブロック破壊後〜アイテム配布までの秒数
         put(14, item(Material.CHEST,
                 "&e破壊後アイテム配布までの秒数: &6" + a.customGraceSeconds + "秒",
-                List.of(
-                        "&7ブロック破壊後から装備配布＆PvP開始までの猶予時間",
-                        "",
-                        "&7左クリック: +1秒",
-                        "&7右クリック: -1秒",
-                        "&7Shift: ×5",
-                        "&d[Qキー] 5秒(初期値)にリセット"
-                ), custom), "atime_grace:" + a.id);
+                List.of("&7ブロック破壊後から装備配布＆PvP開始までの猶予時間", "", "&7左クリック: +1秒 / 右クリック: -1秒", "&d[Qキー] 5秒(初期値)にリセット"), custom), "atime_grace:" + a.id);
 
-        // 個別試合時間
         put(16, item(Material.CLOCK,
                 "&eアリーナ個別 試合時間: &6" + (a.customDurationSeconds > 0 ? a.customDurationSeconds + "秒" : "自動(モード準拠)"),
-                List.of(
-                        "&70秒の場合はモード設定が使われます",
-                        "",
-                        "&7左クリック: +30秒",
-                        "&7右クリック: -30秒",
-                        "&7Shift: ×5",
-                        "&d[Qキー] 自動(0秒)にリセット"
-                ), custom && a.customDurationSeconds > 0), "atime_duration:" + a.id);
+                List.of("&70秒の場合はモード設定が使われます", "", "&7左クリック: +30秒 / 右クリック: -30秒", "&d[Qキー] リセット"), custom && a.customDurationSeconds > 0), "atime_duration:" + a.id);
 
-        // 設置ブロック崩壊秒数
         put(28, item(Material.WHITE_WOOL,
                 "&e設置ブロック崩壊秒数: &6" + (a.customBlockDecaySeconds > 0 ? a.customBlockDecaySeconds + "秒" : "自動(モード準拠)"),
-                List.of(
-                        "&70秒の場合はモード設定が使われます",
-                        "",
-                        "&7左クリック: +1秒",
-                        "&7右クリック: -1秒",
-                        "&7Shift: ×5",
-                        "&d[Qキー] 自動(0秒)にリセット"
-                ), custom && a.customBlockDecaySeconds > 0), "atime_decay:" + a.id);
+                List.of("&70秒の場合はモード設定が使われます", "", "&7左クリック: +1秒 / 右クリック: -1秒", "&d[Qキー] リセット"), custom && a.customBlockDecaySeconds > 0), "atime_decay:" + a.id);
 
         put(49, item(Material.ARROW, "&fアリーナ設定に戻る", List.of()), "page:ARENA_SETTINGS:" + a.id);
     }
 
-    // ------------------------------------------------ ⑥ ロビー＆システム設定 (LOBBY_SETTINGS)
     private void renderLobbySettings() {
         List<Num> lobbyNums = List.of(
                 new Num("lobby.min-players", "最低開始人数", Material.PLAYER_HEAD, 1, 1, 16, true, 2),
@@ -393,11 +349,8 @@ public final class AdminGui implements InventoryHolder {
         int slot = 11;
         for (Num n : lobbyNums) {
             put(slot++, item(n.icon(), "&e" + n.label(), List.of(
-                    "&7現在: &a" + plugin.getConfig().getInt(n.path(), (int)n.def()),
-                    "",
-                    "&7左クリック: &f+" + (int)n.step(),
-                    "&7右クリック: &f-" + (int)n.step(),
-                    "&7Shift: &f×5",
+                    "&7現在: &a" + plugin.getConfig().getInt(n.path(), (int)n.def()), "",
+                    "&7左クリック: &f+" + (int)n.step(), "&7右クリック: &f-" + (int)n.step(), "&7Shift: &f×5",
                     "&d[Qキー] 初期値(" + (int)n.def() + ")に戻す"
             )), "lnum:" + n.path() + ":" + n.step() + ":" + n.min() + ":" + n.max() + ":" + n.def());
         }
@@ -413,23 +366,17 @@ public final class AdminGui implements InventoryHolder {
         slot = 20;
         for (Toggle t : lobbyToggles) {
             String val = plugin.getConfig().getString(t.path(), t.def());
-            put(slot++, item(t.icon(), "&b" + t.label(), List.of(
-                    "&7現在: &a" + val,
-                    "",
-                    "&7クリックで切り替え",
-                    "&d[Qキー] 初期値(" + t.def() + ")に戻す"
-            )), "ltog:" + t.path() + ":" + t.def());
+            put(slot++, item(t.icon(), "&b" + t.label(), List.of("&7現在: &a" + val, "", "&7クリックで切り替え", "&d[Qキー] リセット")), "ltog:" + t.path() + ":" + t.def());
         }
 
         boolean voteItems = VoteMenu.isVoteItemsEnabled();
         put(31, item(voteItems ? Material.LIME_DYE : Material.GRAY_DYE,
                 voteItems ? "&a【投票アイテム配布: 有効 (配布中)】" : "&c【投票アイテム配布: 無効 (停止中)】",
-                List.of("&7クリックで切り替え (/wars vote toggle と連動)", "&7一時的に全員の投票アイテム配布をストップできます")), "toggle_vote_items");
+                List.of("&7クリックで切り替え")), "toggle_vote_items");
 
         put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
 
-    // ------------------------------------------------ ⑦ ロビー位置・ホログラム設定 (LOCATIONS)
     private void renderLocations() {
         put(20, item(Material.RED_BED, "&a&lロビー地点を現在地に設定", List.of("&7参加時や試合終了後の転送先")), "loc:setlobby");
         put(22, item(Material.OAK_SIGN, "&a&lランキングホログラムを現在地に設定", List.of("&7現在立っている足元の上に表示")), "loc:sethologram");
@@ -440,7 +387,6 @@ public final class AdminGui implements InventoryHolder {
         put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
 
-    // ------------------------------------------------ ⑧ ポイント設定 (POINTS_SETTINGS)
     private void renderPointsSettings() {
         List<Num> ptsNums = List.of(
                 new Num("points.kill", "キル獲得point", Material.IRON_SWORD, 5, 0, 500, true, 30),
@@ -451,19 +397,15 @@ public final class AdminGui implements InventoryHolder {
         int slot = 21;
         for (Num n : ptsNums) {
             put(slot++, item(n.icon(), "&e" + n.label(), List.of(
-                    "&7現在: &a" + plugin.getConfig().getInt(n.path(), (int)n.def()) + " pt",
-                    "",
-                    "&7左クリック: &f+" + (int)n.step(),
-                    "&7右クリック: &f-" + (int)n.step(),
-                    "&7Shift: &f×5",
-                    "&d[Qキー] 初期値(" + (int)n.def() + ")に戻す"
+                    "&7現在: &a" + plugin.getConfig().getInt(n.path(), (int)n.def()) + " pt", "",
+                    "&7左クリック: &f+" + (int)n.step(), "&7右クリック: &f-" + (int)n.step(), "&7Shift: &f×5",
+                    "&d[Qキー] リセット"
             )), "pnum:" + n.path() + ":" + n.step() + ":" + n.min() + ":" + n.max() + ":" + n.def());
         }
 
         put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
 
-    // ------------------------------------------------ クリック処理
     public void click(Player p, int slot, ClickType type) {
         String act = actions.get(slot);
         if (act == null) return;
@@ -577,28 +519,27 @@ public final class AdminGui implements InventoryHolder {
             }
             return;
         }
-        if (act.startsWith("ateams:")) {
-            Arena a = plugin.arenas().get(act.substring(7));
-            if (a != null) {
-                if (isDrop) a.maxTeams = 0;
-                else a.maxTeams = Math.max(0, a.maxTeams + (left ? 1 : -1));
+
+        // ★ 子アリーナ作成
+        if (act.startsWith("acreate_child:")) {
+            String pId = act.substring(14);
+            int idx = 1;
+            while (plugin.arenas().get(pId + "_c" + idx) != null) idx++;
+            String childId = pId + "_c" + idx;
+
+            Arena child = plugin.arenas().createChild(pId, childId);
+            if (child != null) {
+                Location l = p.getLocation();
+                child.worldName = l.getWorld().getName();
+                child.cx = l.getBlockX(); child.cy = l.getBlockY(); child.cz = l.getBlockZ();
+                child.enabled = false;
                 plugin.arenas().save();
-                render();
-            }
-            return;
-        }
-        if (act.startsWith("ateamsize:")) {
-            Arena a = plugin.arenas().get(act.substring(10));
-            if (a != null) {
-                if (isDrop) a.teamSize = 0;
-                else a.teamSize = Math.max(0, a.teamSize + (left ? 1 : -1));
-                plugin.arenas().save();
-                render();
+                Msg.send(p, "&a親 &e" + pId + " &aの下位に子アリーナ &b" + childId + " &aを作成しました！");
+                open(plugin, p, Page.ARENA_SETTINGS, childId);
             }
             return;
         }
 
-        // ★ アリーナ個別時間設定の変更処理
         if (act.startsWith("atog_custom:")) {
             Arena a = plugin.arenas().get(act.substring(12));
             if (a != null) {
@@ -661,6 +602,26 @@ public final class AdminGui implements InventoryHolder {
             return;
         }
 
+        if (act.startsWith("ateams:")) {
+            Arena a = plugin.arenas().get(act.substring(7));
+            if (a != null) {
+                if (isDrop) a.maxTeams = 0;
+                else a.maxTeams = Math.max(0, a.maxTeams + (left ? 1 : -1));
+                plugin.arenas().save();
+                render();
+            }
+            return;
+        }
+        if (act.startsWith("ateamsize:")) {
+            Arena a = plugin.arenas().get(act.substring(10));
+            if (a != null) {
+                if (isDrop) a.teamSize = 0;
+                else a.teamSize = Math.max(0, a.teamSize + (left ? 1 : -1));
+                plugin.arenas().save();
+                render();
+            }
+            return;
+        }
         if (act.startsWith("aaddspawn:")) {
             Arena a = plugin.arenas().get(act.substring(10));
             if (a != null) {
@@ -709,7 +670,6 @@ public final class AdminGui implements InventoryHolder {
             open(plugin, p, Page.ARENAS);
             return;
         }
-
         if (act.startsWith("abreak_block:")) {
             Arena a = plugin.arenas().get(act.substring(13));
             if (a != null) {

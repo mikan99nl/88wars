@@ -68,6 +68,10 @@ public final class LobbyListener implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         Player p = e.getPlayer();
+
+        // ★ 一時OPを付与した本人がログアウトした時、相手の一時OPを自動で剥奪
+        plugin.onGranterQuit(p.getUniqueId());
+
         Match m = plugin.match();
         if (m != null) m.onQuit(p);
         plugin.lobby().clearVote(p.getUniqueId());
@@ -96,16 +100,14 @@ public final class LobbyListener implements Listener {
         boolean wasIn = plugin.kits().isInKitArea(e.getFrom());
         boolean nowIn = plugin.kits().isInKitArea(e.getTo());
 
-        // ★ 1. エリア進入時
+        // 1. エリア進入時
         if (!wasIn && nowIn) {
             p.getInventory().clear();
 
-            // OPまたは明示的creative権限持ちのみ自動クリエイティブ
             if (plugin.kits().canAutoCreative(p)) {
                 p.setGameMode(GameMode.CREATIVE);
                 Msg.send(p, "&a[Kit制作エリア] &fエリアに入りました。投票アイテムを消去しました。");
             } else {
-                // ★ 一般プレイヤーへのチャット案内・誘導
                 Msg.send(p, "&6&l[Kit制作エリア] &aエリアに入りました！");
                 Msg.send(p, "&f・クリエイティブ化: &e/kit suggest start &7(※その場から動くと解除されます)");
                 Msg.send(p, "&f・Kitの提案提出: &e/kit suggest <Kit名>");
@@ -116,7 +118,7 @@ public final class LobbyListener implements Listener {
             }
             p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.5f);
         }
-        // ★ 2. エリア退出時: 強制的にアドベンチャーモードに上書き
+        // 2. エリア退出時: 強制的にアドベンチャーモードに上書き
         else if (wasIn && !nowIn) {
             plugin.kits().stopSuggesting(p);
             plugin.getServer().getScheduler().runTask(plugin, () -> {
@@ -129,14 +131,12 @@ public final class LobbyListener implements Listener {
                 p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 1.0f);
             });
         }
-        // ★ 3. エリア内で /kit suggest start 中の一般プレイヤーが「動いた」場合のペナルティ
+        // 3. エリア内で /kit suggest start 中の一般プレイヤーが「動いた」場合のペナルティ
         else if (wasIn && nowIn && plugin.kits().isSuggesting(p)) {
-            // 首振り(視点移動)は許可し、座標(X, Y, Z)の移動のみ検知
             if (e.getFrom().getX() != e.getTo().getX()
                     || e.getFrom().getY() != e.getTo().getY()
                     || e.getFrom().getZ() != e.getTo().getZ()) {
 
-                // クリエイティブ強制解除 ＆ 全アイテム消去
                 plugin.kits().stopSuggesting(p);
                 p.setGameMode(GameMode.ADVENTURE);
                 p.getInventory().clear();
@@ -144,7 +144,6 @@ public final class LobbyListener implements Listener {
                 Msg.send(p, "&c&l【警告】移動が検知されたため、クリエイティブモードを強制解除しアイテムを全消去しました。");
                 p.playSound(p.getLocation(), Sound.ENTITY_ITEM_BREAK, 1.0f, 0.8f);
             } else {
-                // その場にとどまっている間はアクションバーで警告を表示
                 Msg.actionBar(p, "&c&l⚠ 動くとクリエイティブ解除＆アイテム全消去 ⚠");
             }
         }
@@ -156,7 +155,6 @@ public final class LobbyListener implements Listener {
         Player p = e.getPlayer();
         if (inLobby(p)) {
             if (bypass(p)) return;
-            // ★ エリア内でも一般プレイヤーの破壊は禁止
             e.setCancelled(true);
             if (plugin.kits().isInKitArea(p.getLocation())) {
                 Msg.actionBar(p, "&cKit制作エリア内でのブロック破壊は禁止されています");
@@ -169,7 +167,6 @@ public final class LobbyListener implements Listener {
         Player p = e.getPlayer();
         if (inLobby(p)) {
             if (bypass(p)) return;
-            // ★ エリア内でも一般プレイヤーの設置は禁止
             e.setCancelled(true);
             if (plugin.kits().isInKitArea(p.getLocation())) {
                 Msg.actionBar(p, "&cKit制作エリア内でのブロック設置は禁止されています");
@@ -182,7 +179,6 @@ public final class LobbyListener implements Listener {
         Player p = e.getPlayer();
         if (inLobby(p)) {
             if (bypass(p)) return;
-            // ★ エリア内でも一般プレイヤーのアイテムドロップは禁止
             e.setCancelled(true);
             if (plugin.kits().isInKitArea(p.getLocation())) {
                 Msg.actionBar(p, "&cKit制作エリア内でのアイテム破棄は禁止されています");
@@ -194,7 +190,6 @@ public final class LobbyListener implements Listener {
     public void onSwap(PlayerSwapHandItemsEvent e) {
         Player p = e.getPlayer();
         if (inLobby(p)) {
-            // Kit制作エリア内でのオフハンド交換(Fキー)はKit制作に関わるため許可
             if (plugin.kits().isInKitArea(p.getLocation())) return;
             if (!bypass(p)) e.setCancelled(true);
         }
@@ -213,7 +208,6 @@ public final class LobbyListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onEntityDamage(EntityDamageByEntityEvent e) {
         if (e.getDamager() instanceof Player p && inLobby(p) && !bypass(p)) {
-            // エリア内外問わず他者への攻撃・干渉禁止
             e.setCancelled(true);
         }
     }
@@ -232,7 +226,6 @@ public final class LobbyListener implements Listener {
         Player p = e.getPlayer();
         if (!inLobby(p)) return;
 
-        // ★ エリア内一般プレイヤーの外部ブロッククリック(チェスト/ドア/ボタン等)を禁止
         if (plugin.kits().isInKitArea(p.getLocation())) {
             if (!bypass(p) && (e.getAction() == Action.RIGHT_CLICK_BLOCK || e.getAction() == Action.PHYSICAL)) {
                 e.setCancelled(true);
@@ -290,7 +283,6 @@ public final class LobbyListener implements Listener {
             return;
         }
 
-        // Kit制作エリア内での自身のインベントリ操作(装備整え)は許可
         if (inLobby(p) && !bypass(p) && !plugin.kits().isInKitArea(p.getLocation())) {
             e.setCancelled(true);
         }
