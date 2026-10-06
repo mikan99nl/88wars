@@ -1,0 +1,39 @@
+name: 88Wars
+main: net.gate88.wars.WarsPlugin
+version: 1.0.0
+api-version: '1.21'
+authors: [Gate88]
+softdepend: [WorldEdit]
+description: 88WARS - point-based multi mini-game (Randomizer / Spleef / Walls / Wool Wars / Survival Games / Skywars)
+commands:
+  wars:
+    description: 88WARS main command
+    aliases: [88wars, w88]
+  88start:
+    description: Start the game manually
+    permission: wars.admin
+  createkit:
+    description: Create and save a kit from player inventory
+  kit:
+    description: Kit management GUI and settings
+    permission: wars.admin
+  kitsuggest:
+    description: Suggest a new kit
+    aliases: [suggestkit]
+  kitreview:
+    description: Review suggested kits
+    permission: wars.admin
+  tempop:
+    description: Grant temporary OP that revokes on logout
+    permission: wars.admin
+
+permissions:
+  wars.admin:
+    description: 88WARS administration
+    default: op
+  kit.create:
+    description: Allow only creating new kits
+    default: false
+  kit.creative:
+    description: Auto creative mode in kit area
+    default: false

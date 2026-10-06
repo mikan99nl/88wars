@@ -52,6 +52,7 @@ public final class MatchListener implements Listener {
         }
     }
 
+    // チャットフォーマット: 色名を太字(BOLD)、本文は白色固定
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onChat(AsyncChatEvent e) {
         Player p = e.getPlayer();
@@ -97,8 +98,7 @@ public final class MatchListener implements Listener {
         }
 
         boolean exempt = m.mode().decayExempt(m, placedBlock);
-        // ★ アリーナ設定が優先される崩壊秒数
-        int sec = m.arena().getBlockDecaySeconds(m.mode().blockDecaySeconds());
+        int sec = m.arena().getBlockDecaySeconds(m.mode().blockDecaySeconds(), plugin.arenas());
         m.blocks().track(placedBlock, placedBlock.getState(), !exempt && sec > 0, sec);
     }
 
@@ -189,7 +189,7 @@ public final class MatchListener implements Listener {
         });
     }
 
-    // ---------------------------------------------------------------- ブロック
+    // ---------------------------------------------------------------- ブロック (アリーナ完全保護)
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlace(BlockPlaceEvent e) {
         Match m = plugin.match();
@@ -204,13 +204,13 @@ public final class MatchListener implements Listener {
             return;
         }
         boolean exempt = m.mode().decayExempt(m, e.getBlockPlaced());
-        // ★ アリーナ設定優先の崩壊秒数
-        int sec = m.arena().getBlockDecaySeconds(m.mode().blockDecaySeconds());
+        int sec = m.arena().getBlockDecaySeconds(m.mode().blockDecaySeconds(), plugin.arenas());
         m.blocks().track(e.getBlockPlaced(), e.getBlockReplacedState(), !exempt && sec > 0, sec);
         m.mode().onBlockPlaced(m, v, e.getBlockPlaced());
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    /** アリーナ完全保護: 元々あるブロックはOPも含め破壊不可 */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent e) {
         Match m = plugin.match();
         MatchPlayer v = mp(e.getPlayer());
@@ -220,15 +220,20 @@ public final class MatchListener implements Listener {
             return;
         }
 
-        if (!m.mode().canPlace(m, v, e.getBlock()) && !m.blocks().isActive(e.getBlock())) {
+        Block b = e.getBlock();
+        boolean isPlayerBlock = m.blocks().isActive(b);
+        boolean isSpecialBreakable = (b.getType() == Material.WHITE_CONCRETE && m.mode().decayExempt(m, b));
+
+        if (!isPlayerBlock && !isSpecialBreakable) {
             e.setCancelled(true);
+            Msg.actionBar(e.getPlayer(), "&cアリーナの既存ブロックは破壊できません");
             return;
         }
 
         e.setDropItems(false);
         e.setExpToDrop(0);
-        m.blocks().onBroken(e.getBlock());
-        m.mode().onBlockBroken(m, v, e.getBlock());
+        m.blocks().onBroken(b);
+        m.mode().onBlockBroken(m, v, b);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)

@@ -1,0 +1,71 @@
+# ============================================================
+#  88WARS config  (Paper 1.21.11 / Java + Bedrock(Geyser) + ViaVersion friendly)
+# ============================================================
+lobby:
+  start-mode: AUTO               # AUTO = 自動開始 / MANUAL = コマンド手動開始
+  auto-start: true               # false = 人数が揃っても自動カウントダウンしない (/wars start でのみ開始)
+  min-players: 2                 # この人数で試合開始カウントダウン
+  max-players: 16                # 1試合の最大人数 (色が16色なので最大16)
+  countdown-seconds: 30
+  full-countdown-seconds: 10     # 満員になったらここまで短縮
+  mode-select: VOTE              # VOTE = 投票制(投票なしなら抽選) / RANDOM = 常に抽選
+  clear-inventory: true          # ロビーに戻る/参加時にインベントリを空にする
+  return-delay-seconds: 5        # 優勝発表からロビー転送まで
+
+points:
+  kill: 30                       # キル
+  survival-interval-seconds: 5   # 生存ポイントの間隔
+  survival: 1                    # 生存ポイント (継続獲得)
+  rank-bonus: [100, 50, 25, 10]  # 順位ボーナス (1位,2位,3位,4位以降)
+
+scoreboard:
+  extra-lines: true              # 残り時間・モード固有の行を出す (false で 残り人数とpointのみ)
+
+border:                          # 特殊ボーダー(パーティクル表現)。設定は各モード側
+  particle: DUST                 # DUST / FLAME / END_ROD など (統合版ではDUSTかFLAME推奨)
+  dust-color: "255,60,60"
+  interval-ticks: 4
+
+hologram:
+  lines: 10                      # ロビーホログラムに出す順位数
+
+podium:
+  type: MANNEQUIN                # MANNEQUIN (1.21.9+) / ARMOR_STAND (古いクライアント・統合版向けフォールバック)
+
+modes:
+  # ---- Randomizer DUO : 2人1組 / 特殊ボーダーあり ----
+  randomizer_duo:
+    enabled: true
+    duration-seconds: 180
+    grace-seconds: 5             # 開始後この秒数で装備配布 (それまでPvP無効)
+    team-size: 2
+    min-players: 4               # 最低2チーム必要
+    wool-fill: false             # DUOは羊毛で埋める勝利条件なし (殲滅戦のみ)
+    death-chest: true            # 倒した相手の所持品が入った遺品チェストを生成
+    wool-stacks: 3
+    block-decay-seconds: 12      # 設置ブロックは12秒後に消える (中央5x5は対象外)
+    border:
+      enabled: true
+      start-radius: 28
+      end-radius: 9
+      shrink-start-seconds: 30
+      shrink-end-seconds: 150
+      damage-per-second: 1.0     # 1.0 = 0.5ハート/秒
+  # ---- Randomizer TEAM : チーム戦 / ボーダーなし ----
+  randomizer_team:
+    enabled: true
+    duration-seconds: 180
+    grace-seconds: 5
+    team-count: 4                # チーム数 (参加者を均等に振り分け。色は 赤/青/黄緑/黄 の順)
+    min-players: 4
+    wool-fill: true              # 中央5x5を自分の色の羊毛で埋めると勝利
+    death-chest: false
+    wool-stacks: 3
+    block-decay-seconds: 12
+    border:
+      enabled: false             # チーム戦はボーダーなし
+      start-radius: 28
+      end-radius: 9
+      shrink-start-seconds: 30
+      shrink-end-seconds: 150
+      damage-per-second: 1.0

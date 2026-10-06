@@ -69,7 +69,7 @@ public final class LobbyListener implements Listener {
     public void onQuit(PlayerQuitEvent e) {
         Player p = e.getPlayer();
 
-        // ★ 一時OPを付与した本人がログアウトした時、相手の一時OPを自動で剥奪
+        // 一時OPを付与した本人がログアウトした時、相手の一時OPを自動剥奪
         plugin.onGranterQuit(p.getUniqueId());
 
         Match m = plugin.match();
@@ -131,8 +131,8 @@ public final class LobbyListener implements Listener {
                 p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 1.0f);
             });
         }
-        // 3. エリア内で /kit suggest start 中の一般プレイヤーが「動いた」場合のペナルティ
-        else if (wasIn && nowIn && plugin.kits().isSuggesting(p)) {
+        // 3. エリア内で /kit suggest start 中の一般プレイヤーが「動いた」場合のペナルティ (警告を解消)
+        else if (wasIn && plugin.kits().isSuggesting(p)) {
             if (e.getFrom().getX() != e.getTo().getX()
                     || e.getFrom().getY() != e.getTo().getY()
                     || e.getFrom().getZ() != e.getTo().getZ()) {
