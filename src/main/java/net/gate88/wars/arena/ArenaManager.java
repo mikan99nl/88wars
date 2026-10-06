@@ -31,10 +31,11 @@ public final class ArenaManager {
             arena.cz = a.getInt("cz");
             arena.enabled = a.getBoolean("enabled", true);
             arena.map = a.getString("map");
+            arena.parentId = a.getString("parentId", null);
+            arena.childIds.addAll(a.getStringList("childIds"));
+
             arena.maxTeams = a.getInt("maxTeams", 0);
             arena.teamSize = a.getInt("teamSize", 0);
-
-            // ★ アリーナ個別時間設定の読み込み
             arena.customTimingEnabled = a.getBoolean("customTimingEnabled", false);
             arena.breakDelaySeconds = a.getInt("breakDelaySeconds", 0);
             arena.customGraceSeconds = a.getInt("customGraceSeconds", 5);
@@ -66,10 +67,11 @@ public final class ArenaManager {
             plugin.data().set(p + "cz", a.cz);
             plugin.data().set(p + "enabled", a.enabled);
             plugin.data().set(p + "map", a.map);
+            plugin.data().set(p + "parentId", a.parentId);
+            plugin.data().set(p + "childIds", a.childIds);
+
             plugin.data().set(p + "maxTeams", a.maxTeams);
             plugin.data().set(p + "teamSize", a.teamSize);
-
-            // ★ アリーナ個別時間設定の保存
             plugin.data().set(p + "customTimingEnabled", a.customTimingEnabled);
             plugin.data().set(p + "breakDelaySeconds", a.breakDelaySeconds);
             plugin.data().set(p + "customGraceSeconds", a.customGraceSeconds);
@@ -97,8 +99,36 @@ public final class ArenaManager {
         return a;
     }
 
+    /** ★ 子アリーナを作成 */
+    public Arena createChild(String parentId, String childId) {
+        Arena parent = get(parentId);
+        if (parent == null) return null;
+
+        Arena child = new Arena(childId, parent.modeId);
+        child.parentId = parent.id;
+        parent.childIds.add(child.id);
+
+        arenas.put(childId.toLowerCase(), child);
+        save();
+        return child;
+    }
+
     public boolean delete(String id) {
-        return arenas.remove(id.toLowerCase()) != null;
+        Arena a = arenas.remove(id.toLowerCase());
+        if (a != null) {
+            // 親なら子も削除
+            for (String cId : a.childIds) {
+                arenas.remove(cId.toLowerCase());
+            }
+            // 子なら親のリストから除外
+            if (a.isChild()) {
+                Arena parent = get(a.parentId);
+                if (parent != null) parent.childIds.remove(a.id);
+            }
+            save();
+            return true;
+        }
+        return false;
     }
 
     public List<Arena> all() {

@@ -11,8 +11,7 @@ import org.bukkit.Material;
 import org.bukkit.World;
 
 /**
- * アリーナ定義。
- * center = ボーダー中心 / 中央エリア(5x5)の中心。cy = 立つ高さ(=中央マスの高さ)。
+ * アリーナ定義 (親アリーナ・子アリーナ階層構造対応)
  */
 public final class Arena {
     public final String id;
@@ -23,21 +22,27 @@ public final class Arena {
     public boolean enabled = true;
     public String map;
 
+    // ★ 親子アリーナ関係 (parentId が null なら親、存在すれば子)
+    public String parentId = null;
+    public final List<String> childIds = new ArrayList<>();
+
+    // 個別設定
     public int maxTeams = 0;
     public int teamSize = 0;
-
     public final Set<Material> breakOnStart = new HashSet<>();
-
-    // ★ アリーナ個別の時間・ルール設定
-    public boolean customTimingEnabled = false; // 個別設定の有効/無効フラグ
-    public int breakDelaySeconds = 0;          // 開始から特定ブロック破壊までの秒数
-    public int customGraceSeconds = 5;         // ブロック破壊後からアイテム配布までの秒数
-    public int customDurationSeconds = 0;      // 個別試合時間 (0=モード準拠)
-    public int customBlockDecaySeconds = 0;    // 個別設置ブロック崩壊秒数 (0=モード準拠)
+    public boolean customTimingEnabled = false;
+    public int breakDelaySeconds = 0;
+    public int customGraceSeconds = 5;
+    public int customDurationSeconds = 0;
+    public int customBlockDecaySeconds = 0;
 
     public Arena(String id, String modeId) {
         this.id = id;
         this.modeId = modeId;
+    }
+
+    public boolean isChild() {
+        return parentId != null;
     }
 
     public World world() {
@@ -75,20 +80,44 @@ public final class Arena {
         breakOnStart.clear();
     }
 
-    // ★ 大元設定との優先判定
-    public int getBreakDelay() {
-        return customTimingEnabled ? Math.max(0, breakDelaySeconds) : 0;
+    // ★ 設定の引き継ぎ (親アリーナが存在する場合は親の設定を参照・同期)
+    public Arena getEffectiveParent(ArenaManager manager) {
+        if (isChild() && manager != null) {
+            Arena parent = manager.get(parentId);
+            if (parent != null) return parent;
+        }
+        return this;
     }
 
-    public int getGraceSeconds(int defaultGrace) {
-        return customTimingEnabled ? Math.max(0, customGraceSeconds) : defaultGrace;
+    public int getEffectiveMaxTeams(ArenaManager manager) {
+        return getEffectiveParent(manager).maxTeams;
     }
 
-    public int getDurationSeconds(int defaultDuration) {
-        return (customTimingEnabled && customDurationSeconds > 0) ? customDurationSeconds : defaultDuration;
+    public int getEffectiveTeamSize(ArenaManager manager) {
+        return getEffectiveParent(manager).teamSize;
     }
 
-    public int getBlockDecaySeconds(int defaultDecay) {
-        return (customTimingEnabled && customBlockDecaySeconds > 0) ? customBlockDecaySeconds : defaultDecay;
+    public Set<Material> getEffectiveBreakOnStart(ArenaManager manager) {
+        return getEffectiveParent(manager).breakOnStart;
+    }
+
+    public int getBreakDelay(int defaultBreakDelay, ArenaManager manager) {
+        Arena eff = getEffectiveParent(manager);
+        return eff.customTimingEnabled ? Math.max(0, eff.breakDelaySeconds) : defaultBreakDelay;
+    }
+
+    public int getGraceSeconds(int defaultGrace, ArenaManager manager) {
+        Arena eff = getEffectiveParent(manager);
+        return eff.customTimingEnabled ? Math.max(0, eff.customGraceSeconds) : defaultGrace;
+    }
+
+    public int getDurationSeconds(int defaultDuration, ArenaManager manager) {
+        Arena eff = getEffectiveParent(manager);
+        return (eff.customTimingEnabled && eff.customDurationSeconds > 0) ? eff.customDurationSeconds : defaultDuration;
+    }
+
+    public int getBlockDecaySeconds(int defaultDecay, ArenaManager manager) {
+        Arena eff = getEffectiveParent(manager);
+        return (eff.customTimingEnabled && eff.customBlockDecaySeconds > 0) ? eff.customBlockDecaySeconds : defaultDecay;
     }
 }

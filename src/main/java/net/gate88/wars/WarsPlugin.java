@@ -80,6 +80,15 @@ public final class WarsPlugin extends JavaPlugin {
             getCommand("kit").setExecutor(cmd);
             getCommand("kit").setTabCompleter(cmd);
         }
+        // WarsPlugin.java の onEnable 内に追加
+        if (getCommand("kitsuggest") != null) {
+            getCommand("kitsuggest").setExecutor(cmd);
+            getCommand("kitsuggest").setTabCompleter(cmd);
+        }
+        if (getCommand("kitreview") != null) {
+            getCommand("kitreview").setExecutor(cmd);
+            getCommand("kitreview").setTabCompleter(cmd);
+        }
 
         lobby.start();
         Bukkit.getScheduler().runTask(this, () -> {

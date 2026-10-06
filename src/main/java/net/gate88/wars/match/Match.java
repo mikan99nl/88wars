@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.arena.Arena;
@@ -60,7 +61,6 @@ public final class Match {
     private boolean aborted;
     private final List<org.bukkit.entity.Entity> tracked = new ArrayList<>();
 
-    // ★ ブロック破壊とアイテム配布の時系列管理
     private boolean blocksBroken = false;
     private int breakAtElapsed = 0;
 
@@ -75,8 +75,12 @@ public final class Match {
         List<Player> list = new ArrayList<>(participants);
         Collections.shuffle(list);
 
-        int count = arena.maxTeams > 0 ? arena.maxTeams : mode.teamCount();
-        int size = arena.teamSize > 0 ? arena.teamSize : mode.teamSize();
+        // ★ 親アリーナ設定も考慮してチーム数・人数を決定
+        int effectiveTeams = arena.getEffectiveMaxTeams(plugin.arenas());
+        int effectiveTeamSize = arena.getEffectiveTeamSize(plugin.arenas());
+
+        int count = effectiveTeams > 0 ? effectiveTeams : mode.teamCount();
+        int size = effectiveTeamSize > 0 ? effectiveTeamSize : mode.teamSize();
 
         if (count > 0) {
             int n = Math.max(1, Math.min(count, list.size()));
@@ -105,7 +109,6 @@ public final class Match {
         }
     }
 
-    // ------------------------------------------------------------ getters
     public WarsMode mode() { return mode; }
     public Arena arena() { return arena; }
     public World world() { return world; }
@@ -134,7 +137,7 @@ public final class Match {
     }
 
     public int matchDuration() {
-        return arena.getDurationSeconds(mode.durationSeconds());
+        return arena.getDurationSeconds(mode.durationSeconds(), plugin.arenas());
     }
 
     public int timeLeft() {
@@ -149,14 +152,13 @@ public final class Match {
         return arena.center();
     }
 
-    // ------------------------------------------------------------ start
     public void start() {
         plugin.podium().clear();
         plugin.clearTrackedTridents();
         cleanWorldEntities();
 
-        // 壊れるまでの秒数が0の場合は開始と同時に即座に破壊
-        int breakDelay = arena.getBreakDelay();
+        // ★ 大元モード設定またはアリーナ個別設定からブレイクディレイを取得
+        int breakDelay = arena.getBreakDelay(mode.breakDelaySeconds(), plugin.arenas());
         if (breakDelay <= 0) {
             breakConfiguredArenaBlocks();
             blocksBroken = true;
@@ -185,7 +187,7 @@ public final class Match {
 
                 String subMsg = (breakDelay > 0)
                         ? "&7" + breakDelay + "秒後にブロックが開放されます"
-                        : "&7" + arena.getGraceSeconds(mode.graceSeconds()) + "秒後に装備が配布されます";
+                        : "&7" + arena.getGraceSeconds(mode.graceSeconds(), plugin.arenas()) + "秒後に装備が配布されます";
 
                 Msg.title(p, "&e&l" + mode.displayName, subMsg, 5, 50, 10);
                 p.playSound(p.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 0.4f, 1.2f);
@@ -214,7 +216,8 @@ public final class Match {
     }
 
     private void breakConfiguredArenaBlocks() {
-        if (arena.breakOnStart.isEmpty() || world == null) return;
+        Set<Material> breakBlocks = arena.getEffectiveBreakOnStart(plugin.arenas());
+        if (breakBlocks.isEmpty() || world == null) return;
         int r = 35;
         int minY = Math.max(world.getMinHeight(), arena.cy - 10);
         int maxY = Math.min(world.getMaxHeight(), arena.cy + 30);
@@ -223,7 +226,7 @@ public final class Match {
             for (int z = arena.cz - r; z <= arena.cz + r; z++) {
                 for (int y = minY; y <= maxY; y++) {
                     Block b = world.getBlockAt(x, y, z);
-                    if (arena.breakOnStart.contains(b.getType())) {
+                    if (breakBlocks.contains(b.getType())) {
                         blocks.trackFixed(b, b.getState());
                         world.spawnParticle(Particle.BLOCK, b.getLocation().add(0.5, 0.5, 0.5), 6, 0.2, 0.2, 0.2, b.getBlockData());
                         b.setType(Material.AIR, false);
@@ -250,16 +253,14 @@ public final class Match {
         p.setInvulnerable(false);
     }
 
-    // ------------------------------------------------------------ tick (ブロック破壊＆アイテム配布の時系列進行)
     private void tick() {
         if (isOver()) return;
         elapsed++;
 
         if (state == State.PREPARING) {
-            int breakDelay = arena.getBreakDelay();
-            int graceAfterBreak = arena.getGraceSeconds(mode.graceSeconds());
+            int breakDelay = arena.getBreakDelay(mode.breakDelaySeconds(), plugin.arenas());
+            int graceAfterBreak = arena.getGraceSeconds(mode.graceSeconds(), plugin.arenas());
 
-            // フェーズ 1: 開始〜ブロック破壊まで
             if (!blocksBroken) {
                 int breakRemain = breakDelay - elapsed;
                 if (breakRemain > 0) {
@@ -270,7 +271,6 @@ public final class Match {
                         p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 0.6f, 1.0f + (breakDelay - breakRemain) * 0.1f);
                     }
                 } else {
-                    // ★ 時間到達でブロック破壊を実行！
                     breakConfiguredArenaBlocks();
                     blocksBroken = true;
                     breakAtElapsed = elapsed;
@@ -278,19 +278,16 @@ public final class Match {
                     playAll(Sound.BLOCK_BEACON_ACTIVATE, 1.0f, 1.2f);
                     broadcastToMatch("&a&lブロックが開放されました！");
 
-                    // 破壊後の待機が0秒なら即座にアイテム配布
                     if (graceAfterBreak <= 0) {
                         state = State.RUNNING;
                         mode.onGraceEnd(this);
                     }
                 }
-            }
-            // フェーズ 2: ブロック破壊後〜アイテム配布まで
-            else {
+            } else {
                 int graceRemain = graceAfterBreak - (elapsed - breakAtElapsed);
                 if (graceRemain <= 0) {
                     state = State.RUNNING;
-                    mode.onGraceEnd(this); // ★ 装備・アイテム配布＆PvP解禁
+                    mode.onGraceEnd(this);
                 } else {
                     for (MatchPlayer mp : players.values()) {
                         Player p = mp.player();
@@ -302,7 +299,6 @@ public final class Match {
             }
         }
 
-        // 継続ポイント(生存)
         int interval = Math.max(1, plugin.getConfig().getInt("points.survival-interval-seconds", 5));
         int survPts = plugin.getConfig().getInt("points.survival", 1);
         for (MatchPlayer mp : players.values()) {
@@ -409,7 +405,6 @@ public final class Match {
         }
     }
 
-    // ------------------------------------------------------------ sidebar
     public void updateSidebars() {
         boolean extra = plugin.getConfig().getBoolean("scoreboard.extra-lines", true);
         int alive = aliveCount();
@@ -434,7 +429,6 @@ public final class Match {
         }
     }
 
-    // ------------------------------------------------------------ elimination
     public void recordAttack(Player victim, Player attacker) {
         MatchPlayer v = participant(victim);
         MatchPlayer a = participant(attacker);
@@ -554,7 +548,6 @@ public final class Match {
         }
     }
 
-    // ------------------------------------------------------------ finish
     private List<MatchTeam> buildRanking(MatchTeam winner) {
         List<MatchTeam> ranking = new ArrayList<>();
         if (winner != null) ranking.add(winner);
@@ -674,10 +667,18 @@ public final class Match {
         recentDamagers.clear();
         mode.onEnd(this);
         if (!aborted && !podium.isEmpty()) plugin.podium().show(podium);
+
         for (MatchPlayer mp : players.values()) {
             Player p = mp.player();
             if (p != null) {
                 p.setInvulnerable(false);
+
+                if (!plugin.kits().isKeepKit(p.getUniqueId())) {
+                    if (plugin.kits().getForcedKit() != null) {
+                        plugin.kits().clearForcedKit();
+                    }
+                }
+
                 plugin.lobby().sendToLobby(p);
 
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
@@ -701,7 +702,6 @@ public final class Match {
         }
     }
 
-    // ------------------------------------------------------------ helpers
     public void trackEntity(org.bukkit.entity.Entity e) {
         tracked.add(e);
     }

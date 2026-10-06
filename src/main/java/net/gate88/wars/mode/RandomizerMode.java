@@ -113,15 +113,16 @@ public final class RandomizerMode extends WarsMode {
         }
     }
 
+    // ★ お気に入り限定モード & 個人選出を反映した装備配布
     @Override
     public void onGraceEnd(Match m) {
+        // 全体の基本抽選Kit
         selectedKitId = plugin.kits().pickMatchKit();
         if (selectedKitId == null) {
             m.broadcastToMatch("&c[エラー] 使用可能なキットがありません！");
             return;
         }
         selectedKitName = plugin.kits().getKitDisplayName(selectedKitId);
-
         boolean isForced = selectedKitId.equalsIgnoreCase(plugin.kits().getForcedKit());
         int stacks = Math.max(1, cfg().getInt("wool-stacks", 3));
 
@@ -129,16 +130,23 @@ public final class RandomizerMode extends WarsMode {
             Player p = mp.player();
             if (p == null || mp.left || !mp.alive) continue;
 
-            plugin.kits().applyKit(p, selectedKitId);
+            // ★ お気に入り限定モードのプレイヤーは専用抽選、通常プレイヤーは全体のKit
+            String kitToApply = plugin.kits().pickMatchKitForPlayer(p);
+            if (kitToApply == null) kitToApply = selectedKitId;
+            String kitDisplayName = plugin.kits().getKitDisplayName(kitToApply);
+
+            plugin.kits().applyKit(p, kitToApply);
             applyWarsExtras(p, mp.team, stacks);
 
             Sfx.gearGive(p);
-            Msg.title(p, "&6&lFIGHT!", "&e装備: &f" + selectedKitName, 0, 50, 10);
+            Msg.title(p, "&6&lFIGHT!", "&e装備: &f" + kitDisplayName, 0, 50, 10);
 
             if (isForced) {
-                p.sendMessage(Msg.c(Msg.PREFIX + "&6[運営指定] &a全員に &e" + selectedKitName + " &aが配布されました"));
+                p.sendMessage(Msg.c(Msg.PREFIX + "&6[指定Kit] &a全員に &e" + kitDisplayName + " &aが配布されました"));
+            } else if (plugin.kits().isFavoriteOnly(p.getUniqueId())) {
+                p.sendMessage(Msg.c(Msg.PREFIX + "&e[お気に入り限定] &aあなたのKit: &6" + kitDisplayName));
             } else {
-                p.sendMessage(Msg.c(Msg.PREFIX + "&a全員に同じ装備が配布されました: &e" + selectedKitName));
+                p.sendMessage(Msg.c(Msg.PREFIX + "&a全員に同じ装備が配布されました: &e" + kitDisplayName));
             }
         }
     }
@@ -159,7 +167,6 @@ public final class RandomizerMode extends WarsMode {
             inv.addItem(new ItemStack(Colors.wool(team.color), 64));
         }
 
-        // ★ 鉄のツルハシ (効率強化3・攻撃力1・耐久無限) を配布
         if (fill()) {
             ItemStack pickaxe = new ItemStack(Material.IRON_PICKAXE);
             ItemMeta pmeta = pickaxe.getItemMeta();
@@ -169,7 +176,6 @@ public final class RandomizerMode extends WarsMode {
                 pmeta.addEnchant(Enchantment.EFFICIENCY, 3, true);
                 pmeta.setUnbreakable(true);
 
-                // ★ 攻撃力を1に固定 (基礎攻撃力1.0 + 0.0)
                 AttributeModifier attackMod = new AttributeModifier(
                         new NamespacedKey(plugin, "pickaxe_attack"),
                         0.0,

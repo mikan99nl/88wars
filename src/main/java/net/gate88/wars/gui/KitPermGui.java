@@ -21,7 +21,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.SkullMeta;
 import org.jetbrains.annotations.NotNull;
 
-/** OP限定: Kit権限管理GUI (OP所持者・オフラインプレイヤー対応) */
+/** OP限定: Kit権限管理GUI (クリエイティブ禁止・OP所持者・オフラインプレイヤー対応) */
 public final class KitPermGui implements InventoryHolder {
     private final WarsPlugin plugin;
     private final Inventory inventory;
@@ -65,7 +65,6 @@ public final class KitPermGui implements InventoryHolder {
         inventory.clear();
         Map<UUID, String> holders = plugin.kits().getAllPermHolders();
 
-        // ★ OP所持者（オフライン含む）もすべて統合して一覧に表示
         Set<UUID> allTargets = new LinkedHashSet<>();
         for (OfflinePlayer opPlayer : Bukkit.getOperators()) {
             allTargets.add(opPlayer.getUniqueId());
@@ -83,6 +82,7 @@ public final class KitPermGui implements InventoryHolder {
 
             boolean hasCreate = isOp || plugin.kits().hasCreatePerm(uuid);
             boolean hasCreative = isOp || plugin.kits().hasCreativePerm(uuid);
+            boolean isBlocked = plugin.kits().isCreativeBlocked(uuid);
 
             ItemStack skull = new ItemStack(Material.PLAYER_HEAD);
             SkullMeta meta = (SkullMeta) skull.getItemMeta();
@@ -96,14 +96,15 @@ public final class KitPermGui implements InventoryHolder {
                 lore.add(Msg.c(""));
 
                 if (isOp) {
-                    lore.add(Msg.c("&c★ サーバー管理者 (OP)"));
-                    lore.add(Msg.c("&7すべての権限が無条件で有効です"));
+                    lore.add(Msg.c("&c★ サーバー管理者 (OP) - 全権限有効"));
                 } else {
                     lore.add(Msg.c("&fKit追加権限 (create): " + (hasCreate ? "&a【有効】" : "&c【無効】")));
                     lore.add(Msg.c("&f自動Creative権限 (creative): " + (hasCreative ? "&b【有効】" : "&c【無効】")));
+                    lore.add(Msg.c("&fクリエイティブ化コマンド: " + (isBlocked ? "&4【禁止中(BAN)】" : "&a【許可中】")));
                     lore.add(Msg.c(""));
                     lore.add(Msg.c("&e[左クリック] &fKit追加権限を切り替え"));
                     lore.add(Msg.c("&b[右クリック] &f自動Creative権限を切り替え"));
+                    lore.add(Msg.c("&6[Shift＋右クリック] &cクリエイティブ化の禁止 / 解除"));
                     lore.add(Msg.c("&c[Qキー(ドロップ)] &fこのプレイヤーの権限を完全削除"));
                 }
 
@@ -117,12 +118,12 @@ public final class KitPermGui implements InventoryHolder {
         inventory.setItem(49, createItem(Material.BOOK, "&e&l【権限の説明】", List.of(
                 "&c・OP所持者: &7常にすべての機能・クリエイティブが有効",
                 "&a・create: &7/createkit で新規Kitの追加のみ可能",
-                "&b・creative: &7Kit制作エリアに入った際自動でCreative化"
+                "&b・creative: &7Kit制作エリアに入った際自動でCreative化",
+                "&4・禁止中: &7/kit suggest start 等の使用を拒否"
         )));
         inventory.setItem(53, createItem(Material.ARROW, "&c閉じる", List.of()));
     }
 
-    // ------------------------------------------------ オンラインプレイヤー選択画面 (SELECT_ONLINE)
     private void renderSelectOnline() {
         inventory.clear();
         List<Player> onlines = new ArrayList<>(Bukkit.getOnlinePlayers());
@@ -132,6 +133,7 @@ public final class KitPermGui implements InventoryHolder {
             boolean isOp = p.isOp();
             boolean hasCreate = isOp || plugin.kits().hasCreatePerm(p.getUniqueId());
             boolean hasCreative = isOp || plugin.kits().hasCreativePerm(p.getUniqueId());
+            boolean isBlocked = plugin.kits().isCreativeBlocked(p.getUniqueId());
 
             ItemStack skull = new ItemStack(Material.PLAYER_HEAD);
             SkullMeta meta = (SkullMeta) skull.getItemMeta();
@@ -145,6 +147,7 @@ public final class KitPermGui implements InventoryHolder {
                 } else {
                     lore.add(Msg.c("&fKit追加権限: " + (hasCreate ? "&a有効" : "&c無効")));
                     lore.add(Msg.c("&f自動Creative権限: " + (hasCreative ? "&b有効" : "&c無効")));
+                    lore.add(Msg.c("&fクリエイティブ禁止: " + (isBlocked ? "&4禁止中" : "&a許可中")));
                     lore.add(Msg.c(""));
                     lore.add(Msg.c("&e[左クリック] &fKit追加権限 (create) を付与"));
                     lore.add(Msg.c("&b[右クリック] &f自動Creative (creative) を付与"));
@@ -159,7 +162,6 @@ public final class KitPermGui implements InventoryHolder {
         inventory.setItem(49, createItem(Material.ARROW, "&7一覧に戻る", List.of()));
     }
 
-    // ------------------------------------------------ クリック処理
     public void click(Player p, int slot, ClickType click) {
         if (!p.isOp()) {
             p.closeInventory();
@@ -198,6 +200,16 @@ public final class KitPermGui implements InventoryHolder {
                 plugin.kits().removeAllPerms(target);
                 p.playSound(p.getLocation(), Sound.ENTITY_ITEM_BREAK, 0.8f, 1.0f);
                 Msg.send(p, "&c" + name + " の全権限を削除しました");
+                renderList();
+                return;
+            }
+
+            // ★ Shift＋右クリック: クリエイティブ化コマンド禁止の切り替え
+            if (click.isShiftClick() && click.isRightClick()) {
+                boolean cur = plugin.kits().isCreativeBlocked(target);
+                plugin.kits().setCreativeBlocked(target, name, !cur);
+                p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 0.6f, 1.2f);
+                Msg.send(p, "&e" + name + " &fのクリエイティブ化コマンドを &c" + (!cur ? "【禁止】" : "【許可】") + " &fにしました");
                 renderList();
                 return;
             }

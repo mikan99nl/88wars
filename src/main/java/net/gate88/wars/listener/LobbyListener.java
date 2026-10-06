@@ -4,6 +4,7 @@ import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.gui.AdminGui;
 import net.gate88.wars.gui.KitGui;
 import net.gate88.wars.gui.KitPermGui;
+import net.gate88.wars.gui.KitReviewGui;
 import net.gate88.wars.gui.VoteMenu;
 import net.gate88.wars.match.Match;
 import net.gate88.wars.util.Colors;
@@ -17,6 +18,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -44,8 +46,7 @@ public final class LobbyListener implements Listener {
     }
 
     private boolean bypass(Player p) {
-        return (p.hasPermission("wars.admin") && p.getGameMode() == GameMode.CREATIVE)
-                || plugin.kits().isInKitArea(p.getLocation());
+        return (p.isOp() || p.hasPermission("wars.admin")) && p.getGameMode() == GameMode.CREATIVE;
     }
 
     @EventHandler
@@ -70,6 +71,7 @@ public final class LobbyListener implements Listener {
         Match m = plugin.match();
         if (m != null) m.onQuit(p);
         plugin.lobby().clearVote(p.getUniqueId());
+        plugin.kits().stopSuggesting(p);
         plugin.removeSidebar(p);
         Colors.applyLobbyDisplay(p);
     }
@@ -85,31 +87,38 @@ public final class LobbyListener implements Listener {
         });
     }
 
+    /** Kit制作エリアへの進入・退出・移動監視 */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent e) {
-        if (e.getFrom().getBlockX() == e.getTo().getBlockX()
-                && e.getFrom().getBlockY() == e.getTo().getBlockY()
-                && e.getFrom().getBlockZ() == e.getTo().getBlockZ()) {
-            return;
-        }
-
         Player p = e.getPlayer();
         if (!inLobby(p)) return;
 
         boolean wasIn = plugin.kits().isInKitArea(e.getFrom());
         boolean nowIn = plugin.kits().isInKitArea(e.getTo());
 
+        // ★ 1. エリア進入時
         if (!wasIn && nowIn) {
             p.getInventory().clear();
+
+            // OPまたは明示的creative権限持ちのみ自動クリエイティブ
             if (plugin.kits().canAutoCreative(p)) {
                 p.setGameMode(GameMode.CREATIVE);
-            }
-            Msg.send(p, "&a[Kit制作エリア] &fエリアに入りました。投票アイテムを消去しました。");
-            if (plugin.kits().canCreateKit(p)) {
-                Msg.send(p, "&7装備を整えたら &e/createkit <キット名> &7で追加できます！");
+                Msg.send(p, "&a[Kit制作エリア] &fエリアに入りました。投票アイテムを消去しました。");
+            } else {
+                // ★ 一般プレイヤーへのチャット案内・誘導
+                Msg.send(p, "&6&l[Kit制作エリア] &aエリアに入りました！");
+                Msg.send(p, "&f・クリエイティブ化: &e/kit suggest start &7(※その場から動くと解除されます)");
+                Msg.send(p, "&f・Kitの提案提出: &e/kit suggest <Kit名>");
+                Msg.send(p, "&7※エリア内でのブロック設置・破壊・アイテム破棄は禁止されています。");
+                if (!plugin.kits().isOpOnline()) {
+                    Msg.send(p, "&c※現在OPがオフラインのため、クリエイティブ化・提案は行えません。");
+                }
             }
             p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.5f);
-        } else if (wasIn && !nowIn) {
+        }
+        // ★ 2. エリア退出時: 強制的にアドベンチャーモードに上書き
+        else if (wasIn && !nowIn) {
+            plugin.kits().stopSuggesting(p);
             plugin.getServer().getScheduler().runTask(plugin, () -> {
                 if (!p.isOnline() || !inLobby(p)) return;
                 p.getInventory().clear();
@@ -120,56 +129,93 @@ public final class LobbyListener implements Listener {
                 p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 1.0f);
             });
         }
+        // ★ 3. エリア内で /kit suggest start 中の一般プレイヤーが「動いた」場合のペナルティ
+        else if (wasIn && nowIn && plugin.kits().isSuggesting(p)) {
+            // 首振り(視点移動)は許可し、座標(X, Y, Z)の移動のみ検知
+            if (e.getFrom().getX() != e.getTo().getX()
+                    || e.getFrom().getY() != e.getTo().getY()
+                    || e.getFrom().getZ() != e.getTo().getZ()) {
+
+                // クリエイティブ強制解除 ＆ 全アイテム消去
+                plugin.kits().stopSuggesting(p);
+                p.setGameMode(GameMode.ADVENTURE);
+                p.getInventory().clear();
+
+                Msg.send(p, "&c&l【警告】移動が検知されたため、クリエイティブモードを強制解除しアイテムを全消去しました。");
+                p.playSound(p.getLocation(), Sound.ENTITY_ITEM_BREAK, 1.0f, 0.8f);
+            } else {
+                // その場にとどまっている間はアクションバーで警告を表示
+                Msg.actionBar(p, "&c&l⚠ 動くとクリエイティブ解除＆アイテム全消去 ⚠");
+            }
+        }
     }
 
-    /** ホットバーアイテムの右クリック・左クリック処理 */
-    @EventHandler
-    public void onInteract(PlayerInteractEvent e) {
-        if (e.getHand() != EquipmentSlot.HAND) return;
+    // ------------------------------------------------ 一般プレイヤーのエリア内行動制限
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onBreak(BlockBreakEvent e) {
         Player p = e.getPlayer();
-        if (!inLobby(p)) return;
-
-        if (plugin.kits().isInKitArea(p.getLocation())) return;
-
-        // OP管理ツールの処理 (スロット17 / ネザースター)
-        if (VoteMenu.isAdminTool(plugin, e.getItem())) {
+        if (inLobby(p)) {
+            if (bypass(p)) return;
+            // ★ エリア内でも一般プレイヤーの破壊は禁止
             e.setCancelled(true);
-            boolean isLeft = (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK);
-            VoteMenu.handleAdminTool(plugin, p, isLeft);
-            return;
-        }
-
-        if (e.getAction() != Action.RIGHT_CLICK_AIR && e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-
-        // ★ 修正: 投票配布が有効で、かつ「実際に投票アイテムを持っている時」のみ投票処理を実行
-        // （アイテムを消した場所や、別のアイテムを置いた場合はキャンセルせず通常使用させる）
-        if (VoteMenu.isVoteItemsEnabled() && VoteMenu.isVoteItem(plugin, e.getItem())) {
-            int slot = p.getInventory().getHeldItemSlot();
-            if ((slot >= 0 && slot <= 6) || slot == VoteMenu.RANDOM_SLOT) {
-                e.setCancelled(true);
-                VoteMenu.handleClick(plugin, p, slot);
+            if (plugin.kits().isInKitArea(p.getLocation())) {
+                Msg.actionBar(p, "&cKit制作エリア内でのブロック破壊は禁止されています");
             }
         }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onBreak(BlockBreakEvent e) {
-        if (inLobby(e.getPlayer()) && !bypass(e.getPlayer())) e.setCancelled(true);
-    }
-
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlace(BlockPlaceEvent e) {
-        if (inLobby(e.getPlayer()) && !bypass(e.getPlayer())) e.setCancelled(true);
+        Player p = e.getPlayer();
+        if (inLobby(p)) {
+            if (bypass(p)) return;
+            // ★ エリア内でも一般プレイヤーの設置は禁止
+            e.setCancelled(true);
+            if (plugin.kits().isInKitArea(p.getLocation())) {
+                Msg.actionBar(p, "&cKit制作エリア内でのブロック設置は禁止されています");
+            }
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onDrop(PlayerDropItemEvent e) {
-        if (inLobby(e.getPlayer()) && !bypass(e.getPlayer())) e.setCancelled(true);
+        Player p = e.getPlayer();
+        if (inLobby(p)) {
+            if (bypass(p)) return;
+            // ★ エリア内でも一般プレイヤーのアイテムドロップは禁止
+            e.setCancelled(true);
+            if (plugin.kits().isInKitArea(p.getLocation())) {
+                Msg.actionBar(p, "&cKit制作エリア内でのアイテム破棄は禁止されています");
+            }
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onSwap(PlayerSwapHandItemsEvent e) {
-        if (inLobby(e.getPlayer()) && !bypass(e.getPlayer())) e.setCancelled(true);
+        Player p = e.getPlayer();
+        if (inLobby(p)) {
+            // Kit制作エリア内でのオフハンド交換(Fキー)はKit制作に関わるため許可
+            if (plugin.kits().isInKitArea(p.getLocation())) return;
+            if (!bypass(p)) e.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onDamage(EntityDamageEvent e) {
+        if (!(e.getEntity() instanceof Player p)) return;
+        if (!inLobby(p)) return;
+        e.setCancelled(true);
+        if (e.getCause() == EntityDamageEvent.DamageCause.VOID) {
+            p.teleport(plugin.lobby().lobbyLocation());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onEntityDamage(EntityDamageByEntityEvent e) {
+        if (e.getDamager() instanceof Player p && inLobby(p) && !bypass(p)) {
+            // エリア内外問わず他者への攻撃・干渉禁止
+            e.setCancelled(true);
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -180,13 +226,34 @@ public final class LobbyListener implements Listener {
         }
     }
 
-    @EventHandler(priority = EventPriority.HIGH)
-    public void onDamage(EntityDamageEvent e) {
-        if (!(e.getEntity() instanceof Player p)) return;
+    @EventHandler
+    public void onInteract(PlayerInteractEvent e) {
+        if (e.getHand() != EquipmentSlot.HAND) return;
+        Player p = e.getPlayer();
         if (!inLobby(p)) return;
-        e.setCancelled(true);
-        if (e.getCause() == EntityDamageEvent.DamageCause.VOID) {
-            p.teleport(plugin.lobby().lobbyLocation());
+
+        // ★ エリア内一般プレイヤーの外部ブロッククリック(チェスト/ドア/ボタン等)を禁止
+        if (plugin.kits().isInKitArea(p.getLocation())) {
+            if (!bypass(p) && (e.getAction() == Action.RIGHT_CLICK_BLOCK || e.getAction() == Action.PHYSICAL)) {
+                e.setCancelled(true);
+            }
+            return;
+        }
+
+        if (VoteMenu.isAdminTool(plugin, e.getItem())) {
+            e.setCancelled(true);
+            VoteMenu.handleAdminTool(plugin, p, e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK);
+            return;
+        }
+
+        if (e.getAction() != Action.RIGHT_CLICK_AIR && e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+
+        if (VoteMenu.isVoteItemsEnabled() && VoteMenu.isVoteItem(plugin, e.getItem())) {
+            int slot = p.getInventory().getHeldItemSlot();
+            if ((slot >= 0 && slot <= 6) || slot == VoteMenu.RANDOM_SLOT) {
+                e.setCancelled(true);
+                VoteMenu.handleClick(plugin, p, slot);
+            }
         }
     }
 
@@ -196,29 +263,26 @@ public final class LobbyListener implements Listener {
 
         if (VoteMenu.isAdminTool(plugin, e.getCurrentItem())) {
             e.setCancelled(true);
-            boolean isLeft = e.isLeftClick();
-            VoteMenu.handleAdminTool(plugin, p, isLeft);
+            VoteMenu.handleAdminTool(plugin, p, e.isLeftClick());
             return;
         }
 
         var holder = e.getView().getTopInventory().getHolder();
-
+        if (holder instanceof KitReviewGui krg) {
+            e.setCancelled(true);
+            if (e.getClickedInventory() == e.getView().getTopInventory()) krg.click(p, e.getSlot(), e.getClick());
+            return;
+        }
         if (holder instanceof KitPermGui kpg) {
             e.setCancelled(true);
-            if (e.getClickedInventory() == e.getView().getTopInventory()) {
-                kpg.click(p, e.getSlot(), e.getClick());
-            }
+            if (e.getClickedInventory() == e.getView().getTopInventory()) kpg.click(p, e.getSlot(), e.getClick());
             return;
         }
-
         if (holder instanceof KitGui kg) {
             e.setCancelled(true);
-            if (e.getClickedInventory() == e.getView().getTopInventory()) {
-                kg.click(p, e.getSlot(), e.getClick());
-            }
+            if (e.getClickedInventory() == e.getView().getTopInventory()) kg.click(p, e.getSlot(), e.getClick());
             return;
         }
-
         if (holder instanceof AdminGui ag) {
             e.setCancelled(true);
             if (!p.hasPermission("wars.admin")) return;
@@ -226,12 +290,17 @@ public final class LobbyListener implements Listener {
             return;
         }
 
-        if (inLobby(p) && !bypass(p)) e.setCancelled(true);
+        // Kit制作エリア内での自身のインベントリ操作(装備整え)は許可
+        if (inLobby(p) && !bypass(p) && !plugin.kits().isInKitArea(p.getLocation())) {
+            e.setCancelled(true);
+        }
     }
 
     @EventHandler
     public void onDrag(InventoryDragEvent e) {
         var holder = e.getView().getTopInventory().getHolder();
-        if (holder instanceof AdminGui || holder instanceof KitGui || holder instanceof KitPermGui) e.setCancelled(true);
+        if (holder instanceof AdminGui || holder instanceof KitGui || holder instanceof KitPermGui || holder instanceof KitReviewGui) {
+            e.setCancelled(true);
+        }
     }
 }
