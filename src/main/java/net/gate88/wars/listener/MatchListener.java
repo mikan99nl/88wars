@@ -4,6 +4,7 @@ import io.papermc.paper.event.player.AsyncChatEvent;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.match.Match;
 import net.gate88.wars.match.MatchPlayer;
+import net.gate88.wars.mode.SurvivalGamesMode;
 import net.gate88.wars.util.Colors;
 import net.gate88.wars.util.Msg;
 import net.gate88.wars.util.Sfx;
@@ -28,11 +29,11 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.entity.ProjectileLaunchEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 
-/** 試合中のルール */
 public final class MatchListener implements Listener {
     private final WarsPlugin plugin;
 
@@ -52,7 +53,6 @@ public final class MatchListener implements Listener {
         }
     }
 
-    // チャットフォーマット: 色名を太字(BOLD)、本文は白色固定
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onChat(AsyncChatEvent e) {
         Player p = e.getPlayer();
@@ -80,7 +80,6 @@ public final class MatchListener implements Listener {
         });
     }
 
-    // ---------------------------------------------------------------- バケツ・水流管理
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBucketEmpty(PlayerBucketEmptyEvent e) {
         Match m = plugin.match();
@@ -127,14 +126,32 @@ public final class MatchListener implements Listener {
         }
     }
 
-    // ---------------------------------------------------------------- ダメージ / 脱落
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onDamage(EntityDamageEvent e) {
-        if (!(e.getEntity() instanceof Player victim)) return;
         Match m = plugin.match();
+        if (m == null || m.isOver()) return;
+
+        // コアエンティティへの攻撃処理
+        if (m.mode() instanceof SurvivalGamesMode sg && sg.isCoreEntity(e.getEntity())) {
+            if (e instanceof EntityDamageByEntityEvent byEntity) {
+                Player attacker = null;
+                if (byEntity.getDamager() instanceof Player pl) attacker = pl;
+                else if (byEntity.getDamager() instanceof Projectile pr && pr.getShooter() instanceof Player sp) attacker = sp;
+
+                if (attacker != null) {
+                    MatchPlayer mp = m.participant(attacker);
+                    if (mp != null && mp.alive) {
+                        sg.damageCore(m, attacker, e.getFinalDamage());
+                    }
+                }
+            }
+            e.setCancelled(true);
+            return;
+        }
+
+        if (!(e.getEntity() instanceof Player victim)) return;
         MatchPlayer v = mp(victim);
-        if (m == null || v == null) return;
-        if (m.isOver() || !v.alive) {
+        if (v == null || !v.alive) {
             e.setCancelled(true);
             return;
         }
@@ -189,7 +206,6 @@ public final class MatchListener implements Listener {
         });
     }
 
-    // ---------------------------------------------------------------- ブロック (アリーナ完全保護)
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlace(BlockPlaceEvent e) {
         Match m = plugin.match();
@@ -209,7 +225,6 @@ public final class MatchListener implements Listener {
         m.mode().onBlockPlaced(m, v, e.getBlockPlaced());
     }
 
-    /** アリーナ完全保護: 元々あるブロックはOPも含め破壊不可 */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent e) {
         Match m = plugin.match();
@@ -223,17 +238,33 @@ public final class MatchListener implements Listener {
         Block b = e.getBlock();
         boolean isPlayerBlock = m.blocks().isActive(b);
         boolean isSpecialBreakable = (b.getType() == Material.WHITE_CONCRETE && m.mode().decayExempt(m, b));
+        boolean canModeBreak = m.mode().canBreak(m, v, b);
 
-        if (!isPlayerBlock && !isSpecialBreakable) {
+        if (!isPlayerBlock && !isSpecialBreakable && !canModeBreak) {
             e.setCancelled(true);
             Msg.actionBar(e.getPlayer(), "&cアリーナの既存ブロックは破壊できません");
             return;
+        }
+
+        // SGモードなどの既存ブロック破壊時は復元追跡に登録
+        if (!isPlayerBlock) {
+            m.blocks().trackBreak(b);
         }
 
         e.setDropItems(false);
         e.setExpToDrop(0);
         m.blocks().onBroken(b);
         m.mode().onBlockBroken(m, v, b);
+    }
+
+    /** チェストが空になったら即座にシーランタンに置換 */
+    @EventHandler
+    public void onInventoryClose(InventoryCloseEvent e) {
+        Match m = plugin.match();
+        if (m == null || m.isOver()) return;
+        if (m.mode() instanceof SurvivalGamesMode sg) {
+            sg.checkChestEmpty(e.getInventory());
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)

@@ -166,21 +166,46 @@ public final class AdminGui implements InventoryHolder {
     private void renderModeSettings() {
         if (targetId == null) { renderModes(); return; }
         String prefix = "modes." + targetId + ".";
+        boolean isSG = targetId.equalsIgnoreCase("survivalgames") || targetId.equalsIgnoreCase("survival_games");
 
-        List<Num> modeNums = List.of(
-                new Num(prefix + "duration-seconds", "試合時間(秒)", Material.CLOCK, 30, 30, 900, true, 180),
-                // ★ 大元設定の拡張: 開始からブロック破壊までの秒数
-                new Num(prefix + "break-delay-seconds", "ブロック開放までの待機(秒)", Material.IRON_BARS, 1, 0, 60, true, 0),
-                new Num(prefix + "grace-seconds", "装備配布までの猶予(秒)", Material.CHEST, 1, 0, 30, true, 5),
-                new Num(prefix + "block-decay-seconds", "設置ブロック崩壊(秒)", Material.WHITE_WOOL, 1, 0, 60, true, 12),
-                new Num(prefix + "min-players", "最低必要人数", Material.PLAYER_HEAD, 1, 1, 16, true, 2),
-                new Num(prefix + "team-count", "チーム数 (0=自動/team-size準拠)", Material.WHITE_BANNER, 1, 0, 8, true, 0),
-                new Num(prefix + "team-size", "1チームの人数", Material.ARMOR_STAND, 1, 1, 8, true, 1),
-                new Num(prefix + "wool-stacks", "羊毛スタック数", Material.SHEARS, 1, 1, 6, true, 3),
-                new Num(prefix + "border.start-radius", "ボーダー初期半径", Material.RED_STAINED_GLASS, 2, 10, 60, true, 28),
-                new Num(prefix + "border.end-radius", "ボーダー最終半径", Material.RED_STAINED_GLASS, 1, 4, 30, true, 9),
-                new Num(prefix + "border.damage-per-second", "ボーダーダメージ/秒", Material.REDSTONE, 0.5, 0.5, 10, false, 1.0)
-        );
+        List<Num> modeNums = new ArrayList<>();
+        List<Toggle> modeToggles = new ArrayList<>();
+
+        if (isSG) {
+            // Survival Games 専用設定
+            modeNums.add(new Num(prefix + "duration-seconds", "1ラウンド試合時間(秒)", Material.CLOCK, 30, 60, 1800, true, 900));
+            modeNums.add(new Num(prefix + "pvp-grace-seconds", "PvP解禁猶予(秒)", Material.SHIELD, 15, 0, 600, true, 90));
+            modeNums.add(new Num(prefix + "chest-count", "初期チェスト生成数", Material.CHEST, 10, 10, 500, true, 200));
+            modeNums.add(new Num(prefix + "chest-refresh-seconds", "チェスト再補充(秒)", Material.ENDER_CHEST, 30, 60, 1800, true, 720));
+            modeNums.add(new Num(prefix + "core-spawn-seconds", "コア出現時間(秒)", Material.LODESTONE, 30, 60, 1800, true, 600));
+            modeNums.add(new Num(prefix + "team-count", "チーム数 (8〜10想定)", Material.WHITE_BANNER, 1, 0, 16, true, 10));
+            modeNums.add(new Num(prefix + "team-size", "1チームの人数 (5名想定)", Material.ARMOR_STAND, 1, 1, 16, true, 5));
+            modeNums.add(new Num(prefix + "min-players", "最低必要人数", Material.PLAYER_HEAD, 1, 1, 50, true, 2));
+
+            modeToggles.add(new Toggle(prefix + "enabled", "モード有効化", Material.REPEATER, new String[]{"true", "false"}, "true"));
+        } else {
+            // 通常モード (Randomizer 等)
+            modeNums.addAll(List.of(
+                    new Num(prefix + "duration-seconds", "試合時間(秒)", Material.CLOCK, 30, 30, 900, true, 180),
+                    new Num(prefix + "break-delay-seconds", "ブロック開放までの待機(秒)", Material.IRON_BARS, 1, 0, 60, true, 0),
+                    new Num(prefix + "grace-seconds", "装備配布までの猶予(秒)", Material.CHEST, 1, 0, 30, true, 5),
+                    new Num(prefix + "block-decay-seconds", "設置ブロック崩壊(秒)", Material.WHITE_WOOL, 1, 0, 60, true, 12),
+                    new Num(prefix + "min-players", "最低必要人数", Material.PLAYER_HEAD, 1, 1, 16, true, 2),
+                    new Num(prefix + "team-count", "チーム数 (0=自動/team-size準拠)", Material.WHITE_BANNER, 1, 0, 8, true, 0),
+                    new Num(prefix + "team-size", "1チームの人数", Material.ARMOR_STAND, 1, 1, 8, true, 1),
+                    new Num(prefix + "wool-stacks", "羊毛スタック数", Material.SHEARS, 1, 1, 6, true, 3),
+                    new Num(prefix + "border.start-radius", "ボーダー初期半径", Material.RED_STAINED_GLASS, 2, 10, 60, true, 28),
+                    new Num(prefix + "border.end-radius", "ボーダー最終半径", Material.RED_STAINED_GLASS, 1, 4, 30, true, 9),
+                    new Num(prefix + "border.damage-per-second", "ボーダーダメージ/秒", Material.REDSTONE, 0.5, 0.5, 10, false, 1.0)
+            ));
+
+            modeToggles.addAll(List.of(
+                    new Toggle(prefix + "enabled", "モード有効化", Material.REPEATER, new String[]{"true", "false"}, "true"),
+                    new Toggle(prefix + "wool-fill", "中央5x5制圧の勝利条件", Material.WHITE_CONCRETE, new String[]{"true", "false"}, "true"),
+                    new Toggle(prefix + "death-chest", "遺品チェスト生成", Material.ENDER_CHEST, new String[]{"true", "false"}, "false"),
+                    new Toggle(prefix + "border.enabled", "特殊ボーダー有効化", Material.RED_STAINED_GLASS_PANE, new String[]{"true", "false"}, "true")
+            ));
+        }
 
         int slot = 10;
         for (Num n : modeNums) {
@@ -195,13 +220,6 @@ public final class AdminGui implements InventoryHolder {
                     "&d[Qキー(ドロップ)] 初期値(" + (n.isInt() ? (int)n.def() : n.def()) + ")に戻す"
             )), "mnum:" + n.path() + ":" + n.step() + ":" + n.min() + ":" + n.max() + ":" + n.isInt() + ":" + n.def());
         }
-
-        List<Toggle> modeToggles = List.of(
-                new Toggle(prefix + "enabled", "モード有効化", Material.REPEATER, new String[]{"true", "false"}, "true"),
-                new Toggle(prefix + "wool-fill", "中央5x5制圧の勝利条件", Material.WHITE_CONCRETE, new String[]{"true", "false"}, "true"),
-                new Toggle(prefix + "death-chest", "遺品チェスト生成", Material.ENDER_CHEST, new String[]{"true", "false"}, "false"),
-                new Toggle(prefix + "border.enabled", "特殊ボーダー有効化", Material.RED_STAINED_GLASS_PANE, new String[]{"true", "false"}, "true")
-        );
 
         slot = 37;
         for (Toggle t : modeToggles) {
@@ -281,13 +299,12 @@ public final class AdminGui implements InventoryHolder {
 
         put(31, item(Material.LAVA_BUCKET, "&c全スポーン地点を削除", List.of("&7登録されたスポーン座標をすべてクリアします")), "aclearspawns:" + a.id);
 
-        // ★ 親アリーナ用: 子アリーナ作成ボタン
         if (!a.isChild()) {
             put(32, item(Material.DISPENSER, "&d&l【子アリーナを現在地に作成】",
                     List.of("&7親アリーナ &e" + a.id + " &7の設定を完全に同期する", "&7子アリーナを現在地を中心に新規作成します")), "acreate_child:" + a.id);
         }
 
-        put(33, item(Material.ANVIL, "&6現在地を中心にマップ再生成", List.of("&c現在地を中心に61x61のマップを再ビルドします")), "arebuild:" + a.id);
+        put(33, item(Material.ANVIL, "&6現在地を中心にマップ再生成", List.of("&c現在地を中心にマップを再ビルドします")), "arebuild:" + a.id);
 
         List<String> breakLore = new ArrayList<>();
         breakLore.add("&7試合開始時にアリーナ内で自動破壊されるブロックを設定します");
@@ -520,7 +537,6 @@ public final class AdminGui implements InventoryHolder {
             return;
         }
 
-        // ★ 子アリーナ作成
         if (act.startsWith("acreate_child:")) {
             String pId = act.substring(14);
             int idx = 1;

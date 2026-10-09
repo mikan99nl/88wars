@@ -1,6 +1,7 @@
 net\gate88\wars\command\WarsCommand.class
 net\gate88\wars\lobby\PodiumManager.class
 net\gate88\wars\match\BlockTracker.class
+net\gate88\wars\mode\SurvivalGamesMode.class
 net\gate88\wars\lobby\LobbyManager.class
 net\gate88\wars\match\BlockTracker$Key.class
 net\gate88\wars\gui\AdminGui$Num.class

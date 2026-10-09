@@ -147,6 +147,10 @@ public final class BlockTracker {
             }
         }
     }
+    /** 破壊された既存ブロックを復元用として記録 */
+    public void trackBreak(Block b) {
+        originals.putIfAbsent(Key.of(b), b.getState());
+    }
 
     /** 試合終了時: 広がった水流も含めて完全リセット */
     public void restoreAll() {

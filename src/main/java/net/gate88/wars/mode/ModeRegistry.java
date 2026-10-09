@@ -17,10 +17,14 @@ public final class ModeRegistry {
         register(new RandomizerMode(plugin, "randomizer_team", "Randomizer TEAM", Material.CHEST_MINECART,
                 List.of("&eチーム戦 &7/ &aボーダーなし", "&73分以内に敵を全滅、または", "&7中央5x5を自分の色の羊毛で埋めれば勝利!",
                         "&7開始5秒後に全員へ同じランダム装備を配布")));
+        register(new SurvivalGamesMode(plugin, "survivalgames", "Survival Games", Material.CHEST,
+                List.of("&6300x300の広大なマップ &7/ &e全2ラウンド制",
+                        "&7チェストから装備を集めて戦え!",
+                        "&710分後に水色発光コア降下 / 12分後チェスト再補充",
+                        "&c2段階縮小ボーダー (外側ダメージ)")));
         register(new ComingSoonMode(plugin, "spleef", "Spleef", Material.IRON_SHOVEL));
         register(new ComingSoonMode(plugin, "walls", "Walls", Material.BRICKS));
         register(new ComingSoonMode(plugin, "woolwars", "Wool Wars", Material.WHITE_WOOL));
-        register(new ComingSoonMode(plugin, "survivalgames", "Survival Games", Material.CHEST));
         register(new ComingSoonMode(plugin, "skywars", "Skywars", Material.FEATHER));
     }
 

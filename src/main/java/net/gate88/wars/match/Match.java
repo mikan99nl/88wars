@@ -54,7 +54,6 @@ public final class Match {
 
     private State state = State.PREPARING;
     private int elapsed = 0;
-    private int eliminationCounter = 0;
     private BukkitTask ticker;
     private BukkitTask particleTask;
     private BukkitTask returnTask;
@@ -145,6 +144,8 @@ public final class Match {
     }
 
     public double borderRadius() {
+        double custom = mode.customBorderRadius(this, elapsed);
+        if (custom >= 0) return custom;
         return border.enabled() ? border.radiusAt(elapsed) : Double.MAX_VALUE;
     }
 
@@ -208,10 +209,38 @@ public final class Match {
             }
         });
 
+        if (ticker != null) ticker.cancel();
         ticker = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 20L, 20L);
-        if (border.enabled()) {
+
+        boolean hasBorder = border.enabled() || mode.customBorderRadius(this, 0) >= 0;
+        if (hasBorder) {
+            if (particleTask != null) particleTask.cancel();
             long iv = Math.max(2, plugin.getConfig().getInt("border.interval-ticks", 4));
             particleTask = Bukkit.getScheduler().runTaskTimer(plugin, this::drawBorder, 10L, iv);
+        }
+    }
+
+    /** ラウンド制モード用の再初期化 */
+    public void resetForNextRound() {
+        elapsed = 0;
+        state = State.PREPARING;
+        blocksBroken = false;
+        breakAtElapsed = 0;
+        eliminationOrder.clear();
+        recentDamagers.clear();
+        for (org.bukkit.entity.Entity e : tracked) if (e.isValid()) e.remove();
+        tracked.clear();
+
+        for (MatchTeam t : teams) {
+            t.eliminated = false;
+            for (MatchPlayer mp : t.members) {
+                mp.alive = true;
+                mp.eliminatedAtSecond = 0;
+                Player p = mp.player();
+                if (p != null) {
+                    prepare(p);
+                }
+            }
         }
     }
 
@@ -320,13 +349,17 @@ public final class Match {
     }
 
     private void borderTick() {
-        if (!border.enabled()) return;
-        if (elapsed == border.shrinkStartSeconds()) {
+        double half = borderRadius();
+        if (half == Double.MAX_VALUE) return;
+
+        if (border.enabled() && elapsed == border.shrinkStartSeconds()) {
             broadcastToMatch("&c&lボーダーが縮小を開始しました! &7(外側は毎秒ダメージ)");
             playAll(Sound.BLOCK_BEACON_DEACTIVATE, 1.0f, 0.8f);
         }
-        double half = border.radiusAt(elapsed);
+
         double cx = arena.cx + 0.5, cz = arena.cz + 0.5;
+        double dmg = border.enabled() ? border.damagePerSecond() : 1.0;
+
         for (MatchPlayer mp : new ArrayList<>(players.values())) {
             if (!mp.alive || mp.left) continue;
             Player p = mp.player();
@@ -334,7 +367,6 @@ public final class Match {
             Location l = p.getLocation();
             if (Math.abs(l.getX() - cx) > half || Math.abs(l.getZ() - cz) > half) {
                 Msg.actionBar(p, "&c&lボーダーの外です! 中央へ戻れ!");
-                double dmg = border.damagePerSecond();
                 double hp = p.getHealth();
                 if (hp - dmg <= 0.0) {
                     eliminate(mp, null, "ボーダーに焼かれた");
@@ -348,8 +380,10 @@ public final class Match {
     }
 
     private void drawBorder() {
-        if (isOver() || !border.enabled()) return;
-        double half = border.radiusAt(elapsed);
+        if (isOver()) return;
+        double half = borderRadius();
+        if (half == Double.MAX_VALUE) return;
+
         double cx = arena.cx + 0.5, cz = arena.cz + 0.5;
         String pname = plugin.getConfig().getString("border.particle", "DUST").toUpperCase();
         Particle particle;
@@ -456,7 +490,8 @@ public final class Match {
 
         if (killer != null) {
             killer.kills++;
-            int killPts = plugin.getConfig().getInt("points.kill", 30);
+            int customKill = mode.customKillPoints();
+            int killPts = (customKill >= 0) ? customKill : plugin.getConfig().getInt("points.kill", 30);
             killer.points += killPts;
             Player kp = killer.player();
             if (kp != null && !killer.left) {
@@ -478,6 +513,9 @@ public final class Match {
                     MatchPlayer assister = participant(damagerUuid);
                     if (assister != null && assister.team != null && killer.team != null
                             && assister.team == killer.team) {
+                        int assistPts = mode.customAssistPoints();
+                        if (assistPts > 0) assister.points += assistPts;
+
                         Player ap = assister.player();
                         if (ap != null && !assister.left) {
                             Msg.title(ap, "", "&b[⚔] " + victim.name, 0, 25, 5);
@@ -503,6 +541,20 @@ public final class Match {
         }
 
         recentDamagers.remove(victim.uuid);
+
+        // ★ 先殺ボーナス (誰かが死亡した際、その時点で生存している他プレイヤー全員にポイント付与)
+        int placeBonus = mode.placementBonusPoints();
+        if (placeBonus > 0) {
+            for (MatchPlayer mp : players.values()) {
+                if (mp.alive && mp != victim) {
+                    mp.points += placeBonus;
+                    Player p = mp.player();
+                    if (p != null) {
+                        Msg.actionBar(p, "&6+" + placeBonus + "pt &e(生存ボーナス)");
+                    }
+                }
+            }
+        }
 
         if (vp != null && !victim.left) {
             Location l = vp.getLocation();
@@ -544,7 +596,12 @@ public final class Match {
         List<MatchTeam> aliveTeams = new ArrayList<>();
         for (MatchTeam t : teams) if (t.aliveCount() > 0) aliveTeams.add(t);
         if (aliveTeams.size() <= 1) {
-            finish(aliveTeams.isEmpty() ? null : aliveTeams.get(0), aliveTeams.isEmpty() ? "全員脱落" : "最後の生き残り");
+            MatchTeam winner = aliveTeams.isEmpty() ? null : aliveTeams.get(0);
+            // モード側でラウンド継続処理が走る場合はMatchをfinishさせない
+            if (mode.handleRoundEnd(this, winner)) {
+                return;
+            }
+            finish(winner, aliveTeams.isEmpty() ? "全員脱落" : "最後の生き残り");
         }
     }
 
@@ -597,6 +654,20 @@ public final class Match {
         if (champ != null) {
             sb.append("&e&l優勝: &f&l").append(champ.name).append(" &e").append(champ.points).append("pt\n");
         }
+
+        // チーム別順位の表示 (1位: RED, 2位: BLUE...)
+        if (mode.teamMode() || teams.size() > 1) {
+            sb.append("&6&l--- チーム順位 ---\n");
+            for (int i = 0; i < ranking.size(); i++) {
+                MatchTeam t = ranking.get(i);
+                String rankStr = (i == 0) ? "&e1位" : (i == 1) ? "&72位" : (i == 2) ? "&63位" : "&8" + (i + 1) + "位";
+                sb.append(rankStr).append(": ")
+                        .append(Colors.code(t.color)).append("&l").append(Colors.en(t.color)).append(" ")
+                        .append("&7(生存: &a").append(t.aliveCount()).append("&7, キル: &e").append(t.kills()).append("&7)\n");
+            }
+            sb.append("&6&l-------------------\n");
+        }
+
         for (int i = 0; i < Math.min(3, sorted.size()); i++) {
             MatchPlayer mp = sorted.get(i);
             String rank = i == 0 ? "&e1位" : i == 1 ? "&72位" : "&63位";

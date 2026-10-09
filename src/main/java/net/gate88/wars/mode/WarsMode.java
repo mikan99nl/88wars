@@ -29,6 +29,36 @@ public abstract class WarsMode {
         ConfigurationSection s = plugin.getConfig().getConfigurationSection("modes." + id);
         return s != null ? s : plugin.getConfig().createSection("modes." + id);
     }
+    /** アリーナ既存ブロックの破壊可否 (デフォルトは不可) */
+    public boolean canBreak(Match m, MatchPlayer p, Block b) {
+        return false;
+    }
+
+    /** ボーダー半径のカスタム計算 (負の値を返した場合は通常の BorderSpec を使用) */
+    public double customBorderRadius(Match m, int elapsed) {
+        return -1.0;
+    }
+
+    /** 誰かが脱落した際の生存者ボーナスポイント */
+    public int placementBonusPoints() {
+        return 0;
+    }
+
+    /** キル時ポイントの上書き (負の値ならプラグイン共通設定を使用) */
+    public int customKillPoints() {
+        return -1;
+    }
+
+    /** アシスト時ポイントの上書き */
+    public int customAssistPoints() {
+        return 0;
+    }
+
+    /** ラウンド制の管理: 次のラウンドへ移行する場合は true */
+    public boolean handleRoundEnd(Match m, MatchTeam winner) {
+        return false; // 通常モードはそのまま試合終了
+    }
+
 
     public boolean implemented() { return true; }
     public boolean enabled() { return implemented() && cfg().getBoolean("enabled", true); }
