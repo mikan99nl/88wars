@@ -11,6 +11,7 @@ import net.gate88.wars.util.Msg;
 import net.gate88.wars.util.Pos;
 import net.gate88.wars.util.Sfx;
 import org.bukkit.*;
+import org.bukkit.attribute.Attribute;
 import org.bukkit.block.Block;
 import org.bukkit.block.Chest;
 import org.bukkit.configuration.ConfigurationSection;
@@ -26,7 +27,6 @@ public final class SurvivalGamesMode extends WarsMode {
     public static final int MAP_RADIUS = 150; // 300x300 マップ (半径150)
     private final Random rand = new Random();
 
-    // ルートアイテム設定データクラス
     public record LootEntry(ItemStack item, double chance) {}
 
     // ラウンド管理
@@ -46,6 +46,7 @@ public final class SurvivalGamesMode extends WarsMode {
     private BlockDisplay coreDisplay = null;
     private double coreHealth = 100.0;
     private BukkitTask coreFallTask = null;
+    private long lastCoreDamageTime = 0; // 0.1秒無敵時間用
 
     public SurvivalGamesMode(WarsPlugin plugin, String id, String displayName, Material icon, List<String> description) {
         super(plugin, id, displayName, icon, description);
@@ -62,13 +63,12 @@ public final class SurvivalGamesMode extends WarsMode {
     public int chestRefreshSeconds() { return cfg().getInt("chest-refresh-seconds", 720); }
     public int coreSpawnSeconds() { return cfg().getInt("core-spawn-seconds", 600); }
 
-    // ★ ボーダーの1秒あたりに進むブロック数 (最小0.1)
     public double borderSpeed() {
         return Math.max(0.1, cfg().getDouble("border.speed", 0.5));
     }
 
     @Override
-    public int durationSeconds() { return cfg().getInt("duration-seconds", 900); } // 15分
+    public int durationSeconds() { return cfg().getInt("duration-seconds", 900); }
     @Override
     public int customKillPoints() { return 15; }
     @Override
@@ -76,20 +76,18 @@ public final class SurvivalGamesMode extends WarsMode {
     @Override
     public int placementBonusPoints() { return 10; }
 
-    // ------------------------------------------------------------ ボーダー仕様 (速度ベース縮小)
+    // ------------------------------------------------------------ ボーダー仕様
     @Override
     public double customBorderRadius(Match m, int elapsed) {
-        double startRadius = MAP_RADIUS; // 半径 150 (300x300)
-        double midRadius = 7.5;          // 半径 7.5 (15x15)
+        double startRadius = MAP_RADIUS;
+        double midRadius = 7.5;
         double endRadius = 0.0;
         double speed = borderSpeed();
 
-        int startShrink = 120; // 2分経過で開始
-        // 150 から 7.5 まで (142.5ブロック) を speed で縮小する所要秒数
+        int startShrink = 120;
         int shrinkDuration = Math.max(10, (int) Math.ceil((startRadius - midRadius) / speed));
         int midReach = startShrink + shrinkDuration;
-        int secondShrinkStart = midReach + 180; // 15x15で3分間維持
-        // 7.5 から 0 まで (7.5ブロック) を speed で縮小する所要秒数
+        int secondShrinkStart = midReach + 180;
         int secondShrinkDuration = Math.max(5, (int) Math.ceil(midRadius / speed));
 
         if (elapsed < startShrink) return startRadius;
@@ -117,9 +115,9 @@ public final class SurvivalGamesMode extends WarsMode {
         chestsRefreshed = false;
         coreWarned = false;
         coreSpawned = false;
+        lastCoreDamageTime = 0;
         cleanupCore();
 
-        // 中央エンチャントテーブルの設置保証
         Arena a = m.arena();
         Block centerBlock = m.world().getBlockAt(a.cx, a.cy, a.cz);
         if (centerBlock.getType() != Material.ENCHANTING_TABLE) {
@@ -127,7 +125,6 @@ public final class SurvivalGamesMode extends WarsMode {
             centerBlock.setType(Material.ENCHANTING_TABLE, false);
         }
 
-        // 300x300 範囲内にチェストを自動生成
         setupChests(m);
 
         m.broadcastToMatch("&6&l[Survival Games] &e第 " + currentRound + " ラウンド開始！ &7(マップ: 300×300)");
@@ -185,7 +182,6 @@ public final class SurvivalGamesMode extends WarsMode {
             int rx = a.cx + rand.nextInt(MAP_RADIUS * 2 + 1) - MAP_RADIUS;
             int rz = a.cz + rand.nextInt(MAP_RADIUS * 2 + 1) - MAP_RADIUS;
 
-            // ★ バリアやガラスなどの透過ブロックを無視して真の地面Yを探す
             int solidGroundY = findSolidGroundY(w, rx, rz);
             if (solidGroundY <= w.getMinHeight() + 2) continue;
 
@@ -203,7 +199,6 @@ public final class SurvivalGamesMode extends WarsMode {
         }
     }
 
-    /** バリアブロック、ガラス、透過・非固体ブロックを無視して上から下に固体を探索 */
     private int findSolidGroundY(World w, int x, int z) {
         int maxY = Math.min(w.getMaxHeight() - 1, 319);
         for (int y = maxY; y > w.getMinHeight(); y--) {
@@ -219,7 +214,7 @@ public final class SurvivalGamesMode extends WarsMode {
         if (m.isAir()) return true;
         if (m == Material.BARRIER || m == Material.LIGHT || m == Material.STRUCTURE_VOID) return true;
         String name = m.name();
-        if (name.contains("GLASS")) return true; // 全ガラス・板ガラスを無視
+        if (name.contains("GLASS")) return true;
         return !m.isSolid();
     }
 
@@ -312,7 +307,43 @@ public final class SurvivalGamesMode extends WarsMode {
         }
     }
 
-    // ------------------------------------------------------------ コアイベント
+    // ------------------------------------------------------------ コア報酬設定 (GUI対応)
+    public List<ItemStack> loadCoreRewardEntries() {
+        List<ItemStack> list = new ArrayList<>();
+        ConfigurationSection sec = cfg().getConfigurationSection("core-rewards");
+        if (sec != null) {
+            for (String key : sec.getKeys(false)) {
+                ItemStack it = sec.getItemStack(key);
+                if (it != null && !it.getType().isAir()) {
+                    list.add(it);
+                }
+            }
+        }
+        if (list.isEmpty()) {
+            return getDefaultCoreRewards();
+        }
+        return list;
+    }
+
+    public void saveCoreRewardEntries(List<ItemStack> list) {
+        cfg().set("core-rewards", null);
+        for (int i = 0; i < list.size(); i++) {
+            cfg().set("core-rewards." + i, list.get(i));
+        }
+        plugin.saveConfig();
+    }
+
+    public List<ItemStack> getDefaultCoreRewards() {
+        return new ArrayList<>(List.of(
+                new ItemStack(Material.DIAMOND_SWORD),
+                new ItemStack(Material.DIAMOND_HELMET),
+                new ItemStack(Material.DIAMOND_CHESTPLATE),
+                new ItemStack(Material.DIAMOND_LEGGINGS),
+                new ItemStack(Material.DIAMOND_BOOTS)
+        ));
+    }
+
+    // ------------------------------------------------------------ コアイベント実装
     private void chooseCoreLocation(Match m) {
         Arena a = m.arena();
         World w = m.world();
@@ -355,7 +386,12 @@ public final class SurvivalGamesMode extends WarsMode {
                 coreDisplay.teleport(coreTargetLoc.clone().subtract(0.5, 0, 0.5));
                 w.playSound(coreTargetLoc, Sound.ENTITY_IRON_GOLEM_DEATH, 1.5f, 0.8f);
                 w.spawnParticle(Particle.EXPLOSION_EMITTER, coreTargetLoc, 1);
-                m.broadcastToMatch("&b&l【コア着地】 &fコアが地上に着地しました！攻撃して破壊してください！");
+
+                // ★ 着地時にもチャットへ正確な座標をアナウンス
+                m.broadcastToMatch("&b&l【コア着地】 &fコアが地上に着地しました！ &7(座標: X: &e" + coreTargetLoc.getBlockX()
+                        + " &7, Y: &e" + coreTargetLoc.getBlockY() + " &7, Z: &e" + coreTargetLoc.getBlockZ() + "&7)");
+                m.broadcastToMatch("&e攻撃してコアを破壊し、限定物資を手に入れろ！");
+
                 if (coreFallTask != null) coreFallTask.cancel();
                 return;
             }
@@ -371,9 +407,41 @@ public final class SurvivalGamesMode extends WarsMode {
         return coreInteraction != null && coreInteraction.equals(e);
     }
 
-    public void damageCore(Match m, Player attacker, double damage) {
+    /** ★ コアへのダメージ判定 (0.1秒無敵時間・1ダメージ以下無効・実攻撃力/クールダウン正確計算) */
+    public void damageCore(Match m, Player attacker, double rawDamage) {
         if (coreInteraction == null || !coreInteraction.isValid()) return;
-        coreHealth -= Math.max(1.0, damage);
+
+        long now = System.currentTimeMillis();
+        // 0.1秒 (100ms) の無敵時間判定
+        if (now - lastCoreDamageTime < 100) {
+            return;
+        }
+
+        // プレイヤーの攻撃力属性・クールダウンに応じた正確なダメージ計算
+        double actualDmg = rawDamage;
+        if (attacker != null) {
+            var attr = attacker.getAttribute(Attribute.ATTACK_DAMAGE);
+            double baseDmg = (attr != null) ? attr.getValue() : 1.0;
+            float cooldown = attacker.getAttackCooldown(); // 0.0 ~ 1.0
+            actualDmg = baseDmg * (0.2 + 0.8 * cooldown * cooldown);
+
+            // クリティカル判定 (落下中)
+            if (attacker.getFallDistance() > 0.0f && !attacker.isOnGround() && !attacker.isClimbing() && !attacker.isInWater()) {
+                actualDmg *= 1.5;
+            }
+        }
+
+        // 1ダメージ以下の攻撃は無効化 (素手連打やゲージ不足の攻撃を遮断)
+        if (actualDmg <= 1.0) {
+            if (attacker != null) {
+                Msg.actionBar(attacker, "&c攻撃が弱すぎます！ (1ダメージ以下は無効)");
+            }
+            return;
+        }
+
+        lastCoreDamageTime = now;
+        coreHealth -= actualDmg;
+
         Location loc = coreInteraction.getLocation();
         loc.getWorld().playSound(loc, Sound.ENTITY_IRON_GOLEM_HURT, 1.0f, 1.2f);
         loc.getWorld().spawnParticle(Particle.CRIT, loc.clone().add(0, 0.5, 0), 10, 0.2, 0.2, 0.2, 0.1);
@@ -393,17 +461,17 @@ public final class SurvivalGamesMode extends WarsMode {
         Location dropLoc = coreInteraction.getLocation().clone();
         World w = dropLoc.getWorld();
 
-        Material[] rewards = {
-                Material.DIAMOND_SWORD, Material.DIAMOND_HELMET,
-                Material.DIAMOND_CHESTPLATE, Material.DIAMOND_LEGGINGS, Material.DIAMOND_BOOTS
-        };
-        ItemStack reward = new ItemStack(rewards[rand.nextInt(rewards.length)]);
-        w.dropItemNaturally(dropLoc, reward);
+        // ★ GUIで編集可能なコア報酬リストからランダム選出
+        List<ItemStack> rewards = loadCoreRewardEntries();
+        if (!rewards.isEmpty()) {
+            ItemStack reward = rewards.get(rand.nextInt(rewards.size())).clone();
+            w.dropItemNaturally(dropLoc, reward);
+        }
 
         w.playSound(dropLoc, Sound.ENTITY_WITHER_DEATH, 1.0f, 1.2f);
         w.spawnParticle(Particle.TOTEM_OF_UNDYING, dropLoc, 50, 0.5, 0.5, 0.5, 0.2);
 
-        m.broadcastToMatch("&b&l【コア破壊】 &e" + destroyer.getName() + " &aがコアを破壊し、物資を解放しました！");
+        m.broadcastToMatch("&b&l【コア破壊】 &e" + (destroyer != null ? destroyer.getName() : "誰か") + " &aがコアを破壊し、物資を解放しました！");
         cleanupCore();
     }
 
@@ -418,9 +486,7 @@ public final class SurvivalGamesMode extends WarsMode {
     // ------------------------------------------------------------ ブロックルール
     @Override
     public boolean canBreak(Match m, MatchPlayer p, Block b) {
-        // チェストは破壊不可
         if (b.getType() == Material.CHEST) return false;
-        // ★ 空を知らせるシーランタンも破壊不可
         if (b.getType() == Material.SEA_LANTERN && chestLocations.contains(b.getLocation())) {
             return false;
         }
@@ -442,7 +508,7 @@ public final class SurvivalGamesMode extends WarsMode {
             Bukkit.getScheduler().runTaskLater(plugin, () -> {
                 m.resetForNextRound();
                 m.start();
-            }, 200L); // 10秒待機
+            }, 200L);
             return true;
         }
 

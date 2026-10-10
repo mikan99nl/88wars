@@ -31,6 +31,7 @@ public final class AdminGui implements InventoryHolder {
         MODES,
         MODE_SETTINGS,
         SG_LOOT,
+        SG_CORE_LOOT,
         ARENAS,
         ARENA_SETTINGS,
         ARENA_TIMING_SETTINGS,
@@ -57,6 +58,7 @@ public final class AdminGui implements InventoryHolder {
             case MODES -> "&8[88WARS] ゲームモード選択";
             case MODE_SETTINGS -> "&8[88WARS] モード設定: &e" + (targetId != null ? targetId : "");
             case SG_LOOT -> "&8[SG] チェスト中身・確率設定";
+            case SG_CORE_LOOT -> "&8[SG] コア破壊時ドロップ設定";
             case ARENAS -> "&8[88WARS] アリーナ一覧";
             case ARENA_SETTINGS -> "&8[88WARS] アリーナ設定: &e" + (targetId != null ? targetId : "");
             case ARENA_TIMING_SETTINGS -> "&8[88WARS] 個別時間設定: &e" + (targetId != null ? targetId : "");
@@ -121,6 +123,7 @@ public final class AdminGui implements InventoryHolder {
             case MODES -> renderModes();
             case MODE_SETTINGS -> renderModeSettings();
             case SG_LOOT -> renderSgLoot();
+            case SG_CORE_LOOT -> renderSgCoreLoot();
             case ARENAS -> renderArenas();
             case ARENA_SETTINGS -> renderArenaSettings();
             case ARENA_TIMING_SETTINGS -> renderArenaTimingSettings();
@@ -181,20 +184,23 @@ public final class AdminGui implements InventoryHolder {
             modeNums.add(new Num(prefix + "chest-count", "初期チェスト生成数", Material.CHEST, 10, 10, 500, true, 200));
             modeNums.add(new Num(prefix + "chest-refresh-seconds", "チェスト再補充(秒)", Material.ENDER_CHEST, 30, 60, 1800, true, 720));
             modeNums.add(new Num(prefix + "core-spawn-seconds", "コア出現時間(秒)", Material.LODESTONE, 30, 60, 1800, true, 600));
-            // ★ ボーダー速度設定 (最小0.1ブロック/秒、step 0.1)
             modeNums.add(new Num(prefix + "border.speed", "ボーダー縮小速度(マス/秒)", Material.SUGAR, 0.1, 0.1, 5.0, false, 0.5));
             modeNums.add(new Num(prefix + "team-count", "チーム数 (8〜10想定)", Material.WHITE_BANNER, 1, 0, 16, true, 10));
             modeNums.add(new Num(prefix + "team-size", "1チームの人数 (5名想定)", Material.ARMOR_STAND, 1, 1, 16, true, 5));
 
             modeToggles.add(new Toggle(prefix + "enabled", "モード有効化", Material.REPEATER, new String[]{"true", "false"}, "true"));
 
-            // ★ チェスト中身・確率設定GUIへのボタン
-            put(25, item(Material.CHEST, "&6&l【チェスト中身＆確率設定GUI】", List.of(
+            // チェスト中身GUIボタン
+            put(24, item(Material.CHEST, "&6&l【チェスト中身＆確率設定GUI】", List.of(
                     "&7チェストから出現するアイテムと",
-                    "&7それぞれの出現確率(%)を設定します",
-                    "",
-                    "&eクリックして開く"
+                    "&7それぞれの出現確率(%)を設定します", "", "&eクリックして開く"
             ), true), "open_sg_loot");
+
+            // ★ コア報酬設定GUIボタン
+            put(25, item(Material.LODESTONE, "&b&l【コア報酬アイテム設定GUI】", List.of(
+                    "&7HP100のコア破壊時に",
+                    "&7ドロップするアイテムを設定します", "", "&eクリックして開く"
+            ), true), "open_sg_core_loot");
         } else {
             modeNums.addAll(List.of(
                     new Num(prefix + "duration-seconds", "試合時間(秒)", Material.CLOCK, 30, 30, 900, true, 180),
@@ -246,7 +252,6 @@ public final class AdminGui implements InventoryHolder {
         put(49, item(Material.ARROW, "&fモード選択に戻る", List.of()), "page:MODES");
     }
 
-    /** SG専用 チェストドロップ品＆出現確率設定GUI */
     private void renderSgLoot() {
         WarsMode mode = plugin.modes().get("survivalgames");
         if (!(mode instanceof SurvivalGamesMode sg)) {
@@ -277,6 +282,36 @@ public final class AdminGui implements InventoryHolder {
         put(53, item(Material.HOPPER, "&a&l【アイテムの追加方法】", List.of(
                 "&7自分のインベントリにあるアイテムを",
                 "&7クリックすると、新規ドロップ品として登録されます！"
+        )), null);
+    }
+
+    /** ★ コア破壊時ドロップ設定GUI */
+    private void renderSgCoreLoot() {
+        WarsMode mode = plugin.modes().get("survivalgames");
+        if (!(mode instanceof SurvivalGamesMode sg)) {
+            renderModes();
+            return;
+        }
+
+        List<ItemStack> list = sg.loadCoreRewardEntries();
+        for (int i = 0; i < Math.min(45, list.size()); i++) {
+            ItemStack display = list.get(i).clone();
+            ItemMeta meta = display.getItemMeta();
+            if (meta != null) {
+                List<Component> lore = meta.hasLore() ? new ArrayList<>(meta.lore()) : new ArrayList<>();
+                lore.add(Msg.c(""));
+                lore.add(Msg.c("&d[Qキー(ドロップ)] この報酬候補を削除"));
+                meta.lore(lore);
+                display.setItemMeta(meta);
+            }
+            put(i, display, "sgcore_mod:" + i);
+        }
+
+        put(45, item(Material.BOOK, "&f&l初期ダイヤ装備・剣にリセット", List.of("&7標準のダイヤ装備候補に戻します")), "sgcore_reset");
+        put(49, item(Material.ARROW, "&fモード設定に戻る", List.of()), "page:MODE_SETTINGS:survivalgames");
+        put(53, item(Material.HOPPER, "&a&l【アイテムの追加方法】", List.of(
+                "&7自分のインベントリにあるアイテムを",
+                "&7クリックすると、コア破壊時の報酬候補に追加されます！"
         )), null);
     }
 
@@ -483,6 +518,10 @@ public final class AdminGui implements InventoryHolder {
         put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
 
+    public void click(Player p, int slot, ClickType type) {
+        click(p, slot, type, null);
+    }
+
     public void click(Player p, int slot, ClickType type, ItemStack clickedItem) {
         String act = actions.get(slot);
 
@@ -492,8 +531,25 @@ public final class AdminGui implements InventoryHolder {
             if (mode instanceof SurvivalGamesMode sg) {
                 List<SurvivalGamesMode.LootEntry> list = sg.loadLootEntries();
                 if (list.size() < 45) {
-                    list.add(new SurvivalGamesMode.LootEntry(clickedItem.clone(), 30.0)); // 初期30%
+                    list.add(new SurvivalGamesMode.LootEntry(clickedItem.clone(), 30.0));
                     sg.saveLootEntries(list);
+                    p.playSound(p.getLocation(), Sound.ENTITY_ITEM_PICKUP, 0.8f, 1.2f);
+                    render(p);
+                } else {
+                    Msg.send(p, "&c登録可能上限(45個)に達しています");
+                }
+            }
+            return;
+        }
+
+        // ★ SG_CORE_LOOT画面で自分のインベントリをクリックした場合は新規登録
+        if (page == Page.SG_CORE_LOOT && act == null && clickedItem != null && !clickedItem.getType().isAir()) {
+            WarsMode mode = plugin.modes().get("survivalgames");
+            if (mode instanceof SurvivalGamesMode sg) {
+                List<ItemStack> list = sg.loadCoreRewardEntries();
+                if (list.size() < 45) {
+                    list.add(clickedItem.clone());
+                    sg.saveCoreRewardEntries(list);
                     p.playSound(p.getLocation(), Sound.ENTITY_ITEM_PICKUP, 0.8f, 1.2f);
                     render(p);
                 } else {
@@ -520,6 +576,11 @@ public final class AdminGui implements InventoryHolder {
 
         if (act.equals("open_sg_loot")) {
             open(plugin, p, Page.SG_LOOT, "survivalgames");
+            return;
+        }
+
+        if (act.equals("open_sg_core_loot")) {
+            open(plugin, p, Page.SG_CORE_LOOT, "survivalgames");
             return;
         }
 
@@ -552,6 +613,35 @@ public final class AdminGui implements InventoryHolder {
                 sg.saveLootEntries(sg.getDefaultLootEntries());
                 p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.2f);
                 Msg.send(p, "&aチェストドロップ品を初期デフォルトにリセットしました");
+                render(p);
+            }
+            return;
+        }
+
+        // SG コア報酬設定操作
+        if (act.startsWith("sgcore_mod:")) {
+            int idx = Integer.parseInt(act.substring(11));
+            WarsMode mode = plugin.modes().get("survivalgames");
+            if (mode instanceof SurvivalGamesMode sg) {
+                List<ItemStack> list = sg.loadCoreRewardEntries();
+                if (idx < list.size()) {
+                    if (isDrop) {
+                        list.remove(idx);
+                        p.playSound(p.getLocation(), Sound.ENTITY_ITEM_BREAK, 0.8f, 1.0f);
+                        sg.saveCoreRewardEntries(list);
+                        render(p);
+                    }
+                }
+            }
+            return;
+        }
+
+        if (act.equals("sgcore_reset")) {
+            WarsMode mode = plugin.modes().get("survivalgames");
+            if (mode instanceof SurvivalGamesMode sg) {
+                sg.saveCoreRewardEntries(sg.getDefaultCoreRewards());
+                p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.2f);
+                Msg.send(p, "&aコア報酬候補を初期ダイヤ装備・剣にリセットしました");
                 render(p);
             }
             return;

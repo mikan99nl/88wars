@@ -109,8 +109,8 @@ public final class LobbyListener implements Listener {
                 Msg.send(p, "&a[Kit制作エリア] &fエリアに入りました。投票アイテムを消去しました。");
             } else {
                 Msg.send(p, "&6&l[Kit制作エリア] &aエリアに入りました！");
-                Msg.send(p, "&f・クリエイティブ化: &e/kit suggest start &7(※その場から動くと解除されます)");
-                Msg.send(p, "&f・Kitの提案提出: &e/kit suggest <Kit名>");
+                Msg.send(p, "&f・クリエイティブ化: &e/kitsuggest start &7(※その場から動くと解除されます)");
+                Msg.send(p, "&f・Kitの提案提出: &e/kitsuggest <Kit名>");
                 Msg.send(p, "&7※エリア内でのブロック設置・破壊・アイテム破棄は禁止されています。");
                 if (!plugin.kits().isOpOnline()) {
                     Msg.send(p, "&c※現在OPがオフラインのため、クリエイティブ化・提案は行えません。");
@@ -131,7 +131,7 @@ public final class LobbyListener implements Listener {
                 p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 1.0f);
             });
         }
-        // 3. エリア内で /kit suggest start 中の一般プレイヤーが「動いた」場合のペナルティ (警告を解消)
+        // 3. エリア内で /kitsuggest start 中の一般プレイヤーが「動いた」場合のペナルティ
         else if (wasIn && plugin.kits().isSuggesting(p)) {
             if (e.getFrom().getX() != e.getTo().getX()
                     || e.getFrom().getY() != e.getTo().getY()
@@ -276,10 +276,11 @@ public final class LobbyListener implements Listener {
             if (e.getClickedInventory() == e.getView().getTopInventory()) kg.click(p, e.getSlot(), e.getClick());
             return;
         }
+        // ★ AdminGui の処理: 上部・下部インベントリ両方を考慮して渡す
         if (holder instanceof AdminGui ag) {
             e.setCancelled(true);
             if (!p.hasPermission("wars.admin")) return;
-            if (e.getClickedInventory() == e.getView().getTopInventory()) ag.click(p, e.getSlot(), e.getClick());
+            ag.click(p, e.getRawSlot(), e.getClick(), e.getCurrentItem());
             return;
         }
 

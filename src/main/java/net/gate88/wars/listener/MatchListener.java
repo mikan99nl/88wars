@@ -131,7 +131,7 @@ public final class MatchListener implements Listener {
         Match m = plugin.match();
         if (m == null || m.isOver()) return;
 
-        // コアエンティティへの攻撃処理
+        // ★ コアエンティティへの攻撃処理
         if (m.mode() instanceof SurvivalGamesMode sg && sg.isCoreEntity(e.getEntity())) {
             if (e instanceof EntityDamageByEntityEvent byEntity) {
                 Player attacker = null;
@@ -141,7 +141,7 @@ public final class MatchListener implements Listener {
                 if (attacker != null) {
                     MatchPlayer mp = m.participant(attacker);
                     if (mp != null && mp.alive) {
-                        sg.damageCore(m, attacker, e.getFinalDamage());
+                        sg.damageCore(m, attacker, byEntity.getDamage());
                     }
                 }
             }
@@ -246,7 +246,6 @@ public final class MatchListener implements Listener {
             return;
         }
 
-        // SGモードなどの既存ブロック破壊時は復元追跡に登録
         if (!isPlayerBlock) {
             m.blocks().trackBreak(b);
         }
@@ -257,7 +256,6 @@ public final class MatchListener implements Listener {
         m.mode().onBlockBroken(m, v, b);
     }
 
-    /** チェストが空になったら即座にシーランタンに置換 */
     @EventHandler
     public void onInventoryClose(InventoryCloseEvent e) {
         Match m = plugin.match();
