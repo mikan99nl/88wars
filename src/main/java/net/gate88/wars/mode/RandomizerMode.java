@@ -113,41 +113,28 @@ public final class RandomizerMode extends WarsMode {
         }
     }
 
-    // ★ お気に入り限定モード & 個人選出を反映した装備配布
+    // ★ 全員完全に同じKitを一括配布
     @Override
     public void onGraceEnd(Match m) {
-        // 全体の基本抽選Kit
         selectedKitId = plugin.kits().pickMatchKit();
         if (selectedKitId == null) {
             m.broadcastToMatch("&c[エラー] 使用可能なキットがありません！");
             return;
         }
         selectedKitName = plugin.kits().getKitDisplayName(selectedKitId);
-        boolean isForced = selectedKitId.equalsIgnoreCase(plugin.kits().getForcedKit());
         int stacks = Math.max(1, cfg().getInt("wool-stacks", 3));
 
         for (MatchPlayer mp : m.allPlayers()) {
             Player p = mp.player();
             if (p == null || mp.left || !mp.alive) continue;
 
-            // ★ お気に入り限定モードのプレイヤーは専用抽選、通常プレイヤーは全体のKit
-            String kitToApply = plugin.kits().pickMatchKitForPlayer(p);
-            if (kitToApply == null) kitToApply = selectedKitId;
-            String kitDisplayName = plugin.kits().getKitDisplayName(kitToApply);
-
-            plugin.kits().applyKit(p, kitToApply);
+            // ★ 全員同一のKitを適用
+            plugin.kits().applyKit(p, selectedKitId);
             applyWarsExtras(p, mp.team, stacks);
 
             Sfx.gearGive(p);
-            Msg.title(p, "&6&lFIGHT!", "&e装備: &f" + kitDisplayName, 0, 50, 10);
-
-            if (isForced) {
-                p.sendMessage(Msg.c(Msg.PREFIX + "&6[指定Kit] &a全員に &e" + kitDisplayName + " &aが配布されました"));
-            } else if (plugin.kits().isFavoriteOnly(p.getUniqueId())) {
-                p.sendMessage(Msg.c(Msg.PREFIX + "&e[お気に入り限定] &aあなたのKit: &6" + kitDisplayName));
-            } else {
-                p.sendMessage(Msg.c(Msg.PREFIX + "&a全員に同じ装備が配布されました: &e" + kitDisplayName));
-            }
+            Msg.title(p, "&6&lFIGHT!", "&e装備: &f" + selectedKitName, 0, 50, 10);
+            p.sendMessage(Msg.c(Msg.PREFIX + "&a全員に同じ装備が配布されました: &e" + selectedKitName));
         }
     }
 
@@ -207,13 +194,22 @@ public final class RandomizerMode extends WarsMode {
         }
     }
 
+    // ★ 置いたら勝利になるマス（中央5x5の高さcy）以外は設置不可
     @Override
     public boolean canPlace(Match m, MatchPlayer p, Block b) {
-        if (!fill()) return true;
-        if (inFootprint(m.arena(), b) && b.getY() != m.arena().cy) {
+        if (!fill()) {
             Player pl = p.player();
             if (pl != null) {
-                Msg.actionBar(pl, "&c中央エリアの上には設置できません");
+                Msg.actionBar(pl, "&cこのモードではブロックを設置できません");
+                Sfx.deny(pl);
+            }
+            return false;
+        }
+
+        if (!isCell(m.arena(), b)) {
+            Player pl = p.player();
+            if (pl != null) {
+                Msg.actionBar(pl, "&c中央5x5の制圧マス以外には設置できません！");
                 Sfx.deny(pl);
             }
             return false;

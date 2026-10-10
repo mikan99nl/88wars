@@ -5,6 +5,7 @@ import java.util.List;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.arena.Arena;
 import net.gate88.wars.arena.ArenaBuilder;
+import net.gate88.wars.mode.SurvivalGamesMode;
 import net.gate88.wars.mode.WarsMode;
 import net.gate88.wars.util.Msg;
 import net.gate88.wars.util.Pos;
@@ -29,6 +30,7 @@ public final class AdminGui implements InventoryHolder {
         MAIN,
         MODES,
         MODE_SETTINGS,
+        SG_LOOT,
         ARENAS,
         ARENA_SETTINGS,
         ARENA_TIMING_SETTINGS,
@@ -54,6 +56,7 @@ public final class AdminGui implements InventoryHolder {
             case MAIN -> "&8[88WARS] 総合管理メニュー";
             case MODES -> "&8[88WARS] ゲームモード選択";
             case MODE_SETTINGS -> "&8[88WARS] モード設定: &e" + (targetId != null ? targetId : "");
+            case SG_LOOT -> "&8[SG] チェスト中身・確率設定";
             case ARENAS -> "&8[88WARS] アリーナ一覧";
             case ARENA_SETTINGS -> "&8[88WARS] アリーナ設定: &e" + (targetId != null ? targetId : "");
             case ARENA_TIMING_SETTINGS -> "&8[88WARS] 個別時間設定: &e" + (targetId != null ? targetId : "");
@@ -75,7 +78,7 @@ public final class AdminGui implements InventoryHolder {
 
     public static void open(WarsPlugin plugin, Player p, Page page, String targetId) {
         AdminGui g = new AdminGui(plugin, page, targetId);
-        g.render();
+        g.render(p);
         p.openInventory(g.inv);
         Sfx.menuOpen(p);
     }
@@ -110,13 +113,14 @@ public final class AdminGui implements InventoryHolder {
         if (action != null) actions.put(slot, action);
     }
 
-    private void render() {
+    private void render(Player p) {
         inv.clear();
         actions.clear();
         switch (page) {
             case MAIN -> renderMain();
             case MODES -> renderModes();
             case MODE_SETTINGS -> renderModeSettings();
+            case SG_LOOT -> renderSgLoot();
             case ARENAS -> renderArenas();
             case ARENA_SETTINGS -> renderArenaSettings();
             case ARENA_TIMING_SETTINGS -> renderArenaTimingSettings();
@@ -128,7 +132,7 @@ public final class AdminGui implements InventoryHolder {
 
     private void renderMain() {
         put(10, item(Material.DIAMOND_SWORD, "&e&l【ゲームモード設定】", List.of("&7各モードの試合時間・猶予時間・ルール等を設定", "&eクリックして開く")), "page:MODES");
-        put(12, item(Material.GRASS_BLOCK, "&a&l【アリーナ管理】", List.of("&7アリーナ一覧・親子設定・スポーン・生成", "&eクリックして開く")), "page:ARENAS");
+        put(12, item(Material.GRASS_BLOCK, "&a&l【アリーナ管理】", List.of("&7アリーナ一覧・親子設定・スポーン・マップ生成", "&eクリックして開く")), "page:ARENAS");
         put(14, item(Material.CHEST, "&6&l【Kit管理・作成】", List.of("&7Kit一覧・編集・ポーション効果設定 (/kit)", "&eクリックして開く")), "open_kitgui");
         put(16, item(Material.PLAYER_HEAD, "&b&l【Kit権限管理】 &c[OP限定]", List.of("&7誰がKit追加/クリエイティブ権限を持つか管理 (/kit perm)", "&eクリックして開く")), "open_perm_gui");
 
@@ -172,19 +176,26 @@ public final class AdminGui implements InventoryHolder {
         List<Toggle> modeToggles = new ArrayList<>();
 
         if (isSG) {
-            // Survival Games 専用設定
             modeNums.add(new Num(prefix + "duration-seconds", "1ラウンド試合時間(秒)", Material.CLOCK, 30, 60, 1800, true, 900));
             modeNums.add(new Num(prefix + "pvp-grace-seconds", "PvP解禁猶予(秒)", Material.SHIELD, 15, 0, 600, true, 90));
             modeNums.add(new Num(prefix + "chest-count", "初期チェスト生成数", Material.CHEST, 10, 10, 500, true, 200));
             modeNums.add(new Num(prefix + "chest-refresh-seconds", "チェスト再補充(秒)", Material.ENDER_CHEST, 30, 60, 1800, true, 720));
             modeNums.add(new Num(prefix + "core-spawn-seconds", "コア出現時間(秒)", Material.LODESTONE, 30, 60, 1800, true, 600));
+            // ★ ボーダー速度設定 (最小0.1ブロック/秒、step 0.1)
+            modeNums.add(new Num(prefix + "border.speed", "ボーダー縮小速度(マス/秒)", Material.SUGAR, 0.1, 0.1, 5.0, false, 0.5));
             modeNums.add(new Num(prefix + "team-count", "チーム数 (8〜10想定)", Material.WHITE_BANNER, 1, 0, 16, true, 10));
             modeNums.add(new Num(prefix + "team-size", "1チームの人数 (5名想定)", Material.ARMOR_STAND, 1, 1, 16, true, 5));
-            modeNums.add(new Num(prefix + "min-players", "最低必要人数", Material.PLAYER_HEAD, 1, 1, 50, true, 2));
 
             modeToggles.add(new Toggle(prefix + "enabled", "モード有効化", Material.REPEATER, new String[]{"true", "false"}, "true"));
+
+            // ★ チェスト中身・確率設定GUIへのボタン
+            put(25, item(Material.CHEST, "&6&l【チェスト中身＆確率設定GUI】", List.of(
+                    "&7チェストから出現するアイテムと",
+                    "&7それぞれの出現確率(%)を設定します",
+                    "",
+                    "&eクリックして開く"
+            ), true), "open_sg_loot");
         } else {
-            // 通常モード (Randomizer 等)
             modeNums.addAll(List.of(
                     new Num(prefix + "duration-seconds", "試合時間(秒)", Material.CLOCK, 30, 30, 900, true, 180),
                     new Num(prefix + "break-delay-seconds", "ブロック開放までの待機(秒)", Material.IRON_BARS, 1, 0, 60, true, 0),
@@ -235,6 +246,40 @@ public final class AdminGui implements InventoryHolder {
         put(49, item(Material.ARROW, "&fモード選択に戻る", List.of()), "page:MODES");
     }
 
+    /** SG専用 チェストドロップ品＆出現確率設定GUI */
+    private void renderSgLoot() {
+        WarsMode mode = plugin.modes().get("survivalgames");
+        if (!(mode instanceof SurvivalGamesMode sg)) {
+            renderModes();
+            return;
+        }
+
+        List<SurvivalGamesMode.LootEntry> list = sg.loadLootEntries();
+        for (int i = 0; i < Math.min(45, list.size()); i++) {
+            SurvivalGamesMode.LootEntry e = list.get(i);
+            ItemStack display = e.item().clone();
+            ItemMeta meta = display.getItemMeta();
+            if (meta != null) {
+                List<Component> lore = meta.hasLore() ? new ArrayList<>(meta.lore()) : new ArrayList<>();
+                lore.add(Msg.c(""));
+                lore.add(Msg.c("&b★ 出現確率: &e" + String.format("%.1f", e.chance()) + "%"));
+                lore.add(Msg.c("&7左クリック: &a+1% &7/ 右クリック: &c-1%"));
+                lore.add(Msg.c("&7Shift+左: &a+10% &7/ Shift+右: &c-10%"));
+                lore.add(Msg.c("&d[Qキー(ドロップ)] このアイテムを削除"));
+                meta.lore(lore);
+                display.setItemMeta(meta);
+            }
+            put(i, display, "sgloot_mod:" + i);
+        }
+
+        put(45, item(Material.BOOK, "&f&l初期デフォルト物資にリセット", List.of("&7肉、防具、剣、ダイヤ等の標準設定に戻します")), "sgloot_reset");
+        put(49, item(Material.ARROW, "&fモード設定に戻る", List.of()), "page:MODE_SETTINGS:survivalgames");
+        put(53, item(Material.HOPPER, "&a&l【アイテムの追加方法】", List.of(
+                "&7自分のインベントリにあるアイテムを",
+                "&7クリックすると、新規ドロップ品として登録されます！"
+        )), null);
+    }
+
     private void renderArenas() {
         int slot = 0;
         for (Arena a : plugin.arenas().all()) {
@@ -261,7 +306,14 @@ public final class AdminGui implements InventoryHolder {
                     (a.isReady() ? "&a" : "&c") + a.id, lore, a.isChild() || timingCustom), "arena_select:" + a.id);
         }
 
-        put(45, item(Material.EMERALD, "&a現在地に親アリーナを新規自動生成", List.of("&7id は自動採番 (randomizer1, 2, ...)")), "newarena");
+        put(45, item(Material.EMERALD, "&a現在地に通常アリーナ(Randomizer)を新規自動生成", List.of("&7中央台座ビルド付きの標準アリーナ")), "newarena");
+        put(47, item(Material.CHEST, "&6&l【現在地を中心にSGマップ(300×300)を新規作成】", List.of(
+                "&7現在立っている場所を中心とし、300×300の",
+                "&7広大なマップとしてSurvival Gamesアリーナを登録します",
+                "&e足元にエンチャントテーブルを設置し、",
+                "&eその周囲に10チームの円形スポーンを自動生成します！"
+        ), true), "newarena_sg");
+
         put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
 
@@ -270,9 +322,12 @@ public final class AdminGui implements InventoryHolder {
         Arena a = plugin.arenas().get(targetId);
         if (a == null) { renderArenas(); return; }
 
+        boolean isSG = "survivalgames".equalsIgnoreCase(a.modeId);
+
         List<String> infoLore = new ArrayList<>();
         infoLore.add("&7ワールド: &f" + a.worldName);
         infoLore.add("&7中心座標: &f" + a.cx + ", " + a.cy + ", " + a.cz);
+        infoLore.add("&7モード: &f" + a.modeId + (isSG ? " &6(300×300 SG仕様)" : ""));
         if (a.isChild()) {
             infoLore.add("&d★ 子アリーナ (親アリーナ: " + a.parentId + " の設定を同期中)");
         } else {
@@ -304,7 +359,12 @@ public final class AdminGui implements InventoryHolder {
                     List.of("&7親アリーナ &e" + a.id + " &7の設定を完全に同期する", "&7子アリーナを現在地を中心に新規作成します")), "acreate_child:" + a.id);
         }
 
-        put(33, item(Material.ANVIL, "&6現在地を中心にマップ再生成", List.of("&c現在地を中心にマップを再ビルドします")), "arebuild:" + a.id);
+        if (isSG) {
+            put(33, item(Material.ENCHANTING_TABLE, "&6&l【現在地を中心(300×300)に再設定】",
+                    List.of("&7現在地を新たな中心座標(エンチャントテーブル)にし、", "&7周囲に10チーム分の円形スポーンを再生成します")), "arecenter_sg:" + a.id);
+        } else {
+            put(33, item(Material.ANVIL, "&6現在地を中心にマップ再生成", List.of("&c現在地を中心にマップを再ビルドします")), "arebuild:" + a.id);
+        }
 
         List<String> breakLore = new ArrayList<>();
         breakLore.add("&7試合開始時にアリーナ内で自動破壊されるブロックを設定します");
@@ -423,8 +483,26 @@ public final class AdminGui implements InventoryHolder {
         put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
 
-    public void click(Player p, int slot, ClickType type) {
+    public void click(Player p, int slot, ClickType type, ItemStack clickedItem) {
         String act = actions.get(slot);
+
+        // ★ SG_LOOT画面で自分のインベントリをクリックした場合は新規登録
+        if (page == Page.SG_LOOT && act == null && clickedItem != null && !clickedItem.getType().isAir()) {
+            WarsMode mode = plugin.modes().get("survivalgames");
+            if (mode instanceof SurvivalGamesMode sg) {
+                List<SurvivalGamesMode.LootEntry> list = sg.loadLootEntries();
+                if (list.size() < 45) {
+                    list.add(new SurvivalGamesMode.LootEntry(clickedItem.clone(), 30.0)); // 初期30%
+                    sg.saveLootEntries(list);
+                    p.playSound(p.getLocation(), Sound.ENTITY_ITEM_PICKUP, 0.8f, 1.2f);
+                    render(p);
+                } else {
+                    Msg.send(p, "&c登録可能上限(45個)に達しています");
+                }
+            }
+            return;
+        }
+
         if (act == null) return;
         Sfx.click(p);
 
@@ -437,6 +515,45 @@ public final class AdminGui implements InventoryHolder {
             Page targetPage = Page.valueOf(pParts[0]);
             String tId = pParts.length > 1 ? pParts[1] : null;
             open(plugin, p, targetPage, tId);
+            return;
+        }
+
+        if (act.equals("open_sg_loot")) {
+            open(plugin, p, Page.SG_LOOT, "survivalgames");
+            return;
+        }
+
+        // SG ルート設定操作
+        if (act.startsWith("sgloot_mod:")) {
+            int idx = Integer.parseInt(act.substring(11));
+            WarsMode mode = plugin.modes().get("survivalgames");
+            if (mode instanceof SurvivalGamesMode sg) {
+                List<SurvivalGamesMode.LootEntry> list = sg.loadLootEntries();
+                if (idx < list.size()) {
+                    if (isDrop) {
+                        list.remove(idx);
+                        p.playSound(p.getLocation(), Sound.ENTITY_ITEM_BREAK, 0.8f, 1.0f);
+                    } else {
+                        double delta = (shift ? 10.0 : 1.0) * (left ? 1.0 : -1.0);
+                        SurvivalGamesMode.LootEntry cur = list.get(idx);
+                        double newChance = Math.max(0.1, Math.min(100.0, Math.round((cur.chance() + delta) * 10) / 10.0));
+                        list.set(idx, new SurvivalGamesMode.LootEntry(cur.item(), newChance));
+                    }
+                    sg.saveLootEntries(list);
+                    render(p);
+                }
+            }
+            return;
+        }
+
+        if (act.equals("sgloot_reset")) {
+            WarsMode mode = plugin.modes().get("survivalgames");
+            if (mode instanceof SurvivalGamesMode sg) {
+                sg.saveLootEntries(sg.getDefaultLootEntries());
+                p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.2f);
+                Msg.send(p, "&aチェストドロップ品を初期デフォルトにリセットしました");
+                render(p);
+            }
             return;
         }
 
@@ -464,7 +581,7 @@ public final class AdminGui implements InventoryHolder {
                 }
             }
             plugin.saveConfig();
-            render();
+            render(p);
             return;
         }
 
@@ -490,7 +607,7 @@ public final class AdminGui implements InventoryHolder {
                 }
             }
             plugin.saveConfig();
-            render();
+            render(p);
             return;
         }
 
@@ -532,7 +649,7 @@ public final class AdminGui implements InventoryHolder {
                 a.enabled = !a.enabled;
                 plugin.arenas().save();
                 Msg.send(p, a.enabled ? "&aアリーナを有効にしました" : "&6アリーナを編集中にしました");
-                render();
+                render(p);
             }
             return;
         }
@@ -561,7 +678,7 @@ public final class AdminGui implements InventoryHolder {
             if (a != null) {
                 a.customTimingEnabled = !isDrop && !a.customTimingEnabled;
                 plugin.arenas().save();
-                render();
+                render(p);
             }
             return;
         }
@@ -574,7 +691,7 @@ public final class AdminGui implements InventoryHolder {
                     a.breakDelaySeconds = Math.max(0, Math.min(60, a.breakDelaySeconds + d));
                 }
                 plugin.arenas().save();
-                render();
+                render(p);
             }
             return;
         }
@@ -587,7 +704,7 @@ public final class AdminGui implements InventoryHolder {
                     a.customGraceSeconds = Math.max(0, Math.min(60, a.customGraceSeconds + d));
                 }
                 plugin.arenas().save();
-                render();
+                render(p);
             }
             return;
         }
@@ -600,7 +717,7 @@ public final class AdminGui implements InventoryHolder {
                     a.customDurationSeconds = Math.max(0, Math.min(900, a.customDurationSeconds + d));
                 }
                 plugin.arenas().save();
-                render();
+                render(p);
             }
             return;
         }
@@ -613,7 +730,7 @@ public final class AdminGui implements InventoryHolder {
                     a.customBlockDecaySeconds = Math.max(0, Math.min(60, a.customBlockDecaySeconds + d));
                 }
                 plugin.arenas().save();
-                render();
+                render(p);
             }
             return;
         }
@@ -624,7 +741,7 @@ public final class AdminGui implements InventoryHolder {
                 if (isDrop) a.maxTeams = 0;
                 else a.maxTeams = Math.max(0, a.maxTeams + (left ? 1 : -1));
                 plugin.arenas().save();
-                render();
+                render(p);
             }
             return;
         }
@@ -634,7 +751,7 @@ public final class AdminGui implements InventoryHolder {
                 if (isDrop) a.teamSize = 0;
                 else a.teamSize = Math.max(0, a.teamSize + (left ? 1 : -1));
                 plugin.arenas().save();
-                render();
+                render(p);
             }
             return;
         }
@@ -646,7 +763,7 @@ public final class AdminGui implements InventoryHolder {
                 plugin.maps().storeSpawns(a);
                 Msg.send(p, "&a現在地にチーム " + a.spawns.size() + " のスポーン地点を登録しました！");
                 Sfx.success(p);
-                render();
+                render(p);
             }
             return;
         }
@@ -658,7 +775,7 @@ public final class AdminGui implements InventoryHolder {
                 plugin.maps().storeSpawns(a);
                 Msg.send(p, "&eスポーン地点を全消去しました");
                 Sfx.deny(p);
-                render();
+                render(p);
             }
             return;
         }
@@ -674,10 +791,26 @@ public final class AdminGui implements InventoryHolder {
                 plugin.arenas().save();
                 Msg.send(p, "&a現在地を中心にアリーナマップを再生成しました (編集中)");
                 Sfx.success(p);
-                render();
+                render(p);
             }
             return;
         }
+
+        if (act.startsWith("arecenter_sg:")) {
+            Arena a = plugin.arenas().get(act.substring(13));
+            if (a != null) {
+                Location l = p.getLocation();
+                setupSGArenaGeometry(a, l);
+                plugin.arenas().save();
+                plugin.maps().storeSpawns(a);
+                Msg.send(p, "&6&l[Survival Games] &a現在地を300×300マップの中心として再設定しました！");
+                Msg.send(p, "&7足元にエンチャントテーブルを配置し、周囲に10チーム分のスポーンを再生成しました。");
+                Sfx.success(p);
+                render(p);
+            }
+            return;
+        }
+
         if (act.startsWith("adelete:")) {
             String aId = act.substring(8);
             plugin.arenas().delete(aId);
@@ -716,7 +849,7 @@ public final class AdminGui implements InventoryHolder {
                         }
                     }
                 }
-                render();
+                render(p);
             }
             return;
         }
@@ -748,7 +881,7 @@ public final class AdminGui implements InventoryHolder {
             case "toggle_vote_items" -> {
                 boolean next = !VoteMenu.isVoteItemsEnabled();
                 VoteMenu.setVoteItemsEnabled(plugin, next);
-                render();
+                render(p);
             }
             case "match_control" -> {
                 if (left) {
@@ -780,12 +913,49 @@ public final class AdminGui implements InventoryHolder {
                 Sfx.success(p);
                 open(plugin, p, Page.ARENA_SETTINGS, a.id);
             }
+            case "newarena_sg" -> {
+                int i = 1;
+                while (plugin.arenas().get("sg" + i) != null) i++;
+                String aId = "sg" + i;
+                Arena a = plugin.arenas().create(aId, "survivalgames");
+                Location l = p.getLocation();
+                setupSGArenaGeometry(a, l);
+                a.enabled = false;
+                plugin.arenas().save();
+                plugin.maps().storeSpawns(a);
+                Msg.send(p, "&6&l[Survival Games] &a新規マップ &e" + aId + " &aを中心地(300×300)として作成しました！");
+                Msg.send(p, "&7足元にエンチャントテーブルを配置し、周囲に10チーム分の円形スポーンを登録しました。");
+                Sfx.success(p);
+                open(plugin, p, Page.ARENA_SETTINGS, aId);
+            }
             case "reload" -> {
                 plugin.reloadAll();
                 Msg.send(p, "&a全設定・データを再読み込みしました");
-                render();
+                render(p);
             }
             case "close" -> p.closeInventory();
+        }
+    }
+
+    private static void setupSGArenaGeometry(Arena a, Location centerLoc) {
+        a.worldName = centerLoc.getWorld().getName();
+        a.cx = centerLoc.getBlockX();
+        a.cy = centerLoc.getBlockY();
+        a.cz = centerLoc.getBlockZ();
+        a.maxTeams = 10;
+        a.teamSize = 5;
+
+        centerLoc.getBlock().setType(Material.ENCHANTING_TABLE, false);
+
+        a.spawns.clear();
+        int teams = 10;
+        double radius = 6.0;
+        for (int i = 0; i < teams; i++) {
+            double angle = (2 * Math.PI * i) / teams;
+            double sx = a.cx + 0.5 + radius * Math.cos(angle);
+            double sz = a.cz + 0.5 + radius * Math.sin(angle);
+            float yaw = (float) Math.toDegrees(Math.atan2(a.cz + 0.5 - sz, a.cx + 0.5 - sx)) - 90f;
+            a.spawns.add(new Pos(sx, a.cy, sz, yaw, 0f));
         }
     }
 }

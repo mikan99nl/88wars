@@ -12,9 +12,8 @@ import net.gate88.wars.util.Pos;
 import net.gate88.wars.util.Sfx;
 import org.bukkit.*;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockState;
 import org.bukkit.block.Chest;
-import org.bukkit.entity.ArmorStand;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
@@ -24,7 +23,11 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.scheduler.BukkitTask;
 
 public final class SurvivalGamesMode extends WarsMode {
+    public static final int MAP_RADIUS = 150; // 300x300 マップ (半径150)
     private final Random rand = new Random();
+
+    // ルートアイテム設定データクラス
+    public record LootEntry(ItemStack item, double chance) {}
 
     // ラウンド管理
     private int currentRound = 1;
@@ -50,7 +53,7 @@ public final class SurvivalGamesMode extends WarsMode {
 
     @Override
     public String arenaType() {
-        return "survival_games";
+        return "survivalgames";
     }
 
     // ------------------------------------------------------------ 設定アクセサ
@@ -58,6 +61,11 @@ public final class SurvivalGamesMode extends WarsMode {
     public int chestCount() { return cfg().getInt("chest-count", 200); }
     public int chestRefreshSeconds() { return cfg().getInt("chest-refresh-seconds", 720); }
     public int coreSpawnSeconds() { return cfg().getInt("core-spawn-seconds", 600); }
+
+    // ★ ボーダーの1秒あたりに進むブロック数 (最小0.1)
+    public double borderSpeed() {
+        return Math.max(0.1, cfg().getDouble("border.speed", 0.5));
+    }
 
     @Override
     public int durationSeconds() { return cfg().getInt("duration-seconds", 900); } // 15分
@@ -68,20 +76,21 @@ public final class SurvivalGamesMode extends WarsMode {
     @Override
     public int placementBonusPoints() { return 10; }
 
-    // ------------------------------------------------------------ ボーダー仕様
-    // スポーンから2分(120s)で縮小開始 -> 15x15(半径7.5)まで縮小
-    // 15x15になったのち3分(180s)キープ -> 1分(60s)かけて0x0へ縮小
+    // ------------------------------------------------------------ ボーダー仕様 (速度ベース縮小)
     @Override
     public double customBorderRadius(Match m, int elapsed) {
-        double startRadius = 150.0; // 300x300
-        double midRadius = 7.5;     // 15x15
+        double startRadius = MAP_RADIUS; // 半径 150 (300x300)
+        double midRadius = 7.5;          // 半径 7.5 (15x15)
         double endRadius = 0.0;
+        double speed = borderSpeed();
 
-        int startShrink = 120; // 2分後
-        int shrinkDuration = 300; // 5分かけて15x15へ
-        int midReach = startShrink + shrinkDuration; // 420s
-        int secondShrinkStart = midReach + 180; // 3分経過後 = 600s
-        int secondShrinkDuration = 60; // 1分かけて0x0へ = 660s
+        int startShrink = 120; // 2分経過で開始
+        // 150 から 7.5 まで (142.5ブロック) を speed で縮小する所要秒数
+        int shrinkDuration = Math.max(10, (int) Math.ceil((startRadius - midRadius) / speed));
+        int midReach = startShrink + shrinkDuration;
+        int secondShrinkStart = midReach + 180; // 15x15で3分間維持
+        // 7.5 から 0 まで (7.5ブロック) を speed で縮小する所要秒数
+        int secondShrinkDuration = Math.max(5, (int) Math.ceil(midRadius / speed));
 
         if (elapsed < startShrink) return startRadius;
         if (elapsed < midReach) {
@@ -110,9 +119,18 @@ public final class SurvivalGamesMode extends WarsMode {
         coreSpawned = false;
         cleanupCore();
 
+        // 中央エンチャントテーブルの設置保証
+        Arena a = m.arena();
+        Block centerBlock = m.world().getBlockAt(a.cx, a.cy, a.cz);
+        if (centerBlock.getType() != Material.ENCHANTING_TABLE) {
+            m.blocks().trackFixed(centerBlock, centerBlock.getState());
+            centerBlock.setType(Material.ENCHANTING_TABLE, false);
+        }
+
+        // 300x300 範囲内にチェストを自動生成
         setupChests(m);
 
-        m.broadcastToMatch("&e&l[Survival Games] &f第 " + currentRound + " ラウンド開始！");
+        m.broadcastToMatch("&6&l[Survival Games] &e第 " + currentRound + " ラウンド開始！ &7(マップ: 300×300)");
         m.broadcastToMatch("&7※ PvP解禁まで " + (pvpGraceSeconds() / 60) + "分" + (pvpGraceSeconds() % 60) + "秒");
     }
 
@@ -120,7 +138,6 @@ public final class SurvivalGamesMode extends WarsMode {
     public void onSecond(Match m) {
         int elapsed = m.elapsed();
 
-        // 1. PvP解禁カウントダウン
         int pvpRemain = pvpGraceSeconds() - elapsed;
         if (pvpRemain == 30 || pvpRemain == 10 || (pvpRemain > 0 && pvpRemain <= 5)) {
             m.broadcastToMatch("&c&lPvP解禁まであと " + pvpRemain + " 秒！");
@@ -130,7 +147,6 @@ public final class SurvivalGamesMode extends WarsMode {
             m.playAll(Sound.ENTITY_ENDER_DRAGON_GROWL, 0.8f, 1.0f);
         }
 
-        // 2. コアイベント (10分経過時、15秒前に警告)
         int coreTime = coreSpawnSeconds();
         if (!coreWarned && elapsed >= coreTime - 15) {
             coreWarned = true;
@@ -150,7 +166,6 @@ public final class SurvivalGamesMode extends WarsMode {
             spawnFallingCore(m);
         }
 
-        // 3. チェスト再補充 (12分経過時)
         if (!chestsRefreshed && elapsed >= chestRefreshSeconds()) {
             chestsRefreshed = true;
             refreshAllChests(m);
@@ -159,7 +174,7 @@ public final class SurvivalGamesMode extends WarsMode {
         }
     }
 
-    // ------------------------------------------------------------ チェスト生成＆物資ルーティング
+    // ------------------------------------------------------------ 透過ブロック無視チェスト生成
     private void setupChests(Match m) {
         chestLocations.clear();
         Arena a = m.arena();
@@ -167,13 +182,15 @@ public final class SurvivalGamesMode extends WarsMode {
         int count = chestCount();
 
         for (int i = 0; i < count; i++) {
-            int rx = a.cx + rand.nextInt(301) - 150;
-            int rz = a.cz + rand.nextInt(301) - 150;
-            int highestY = w.getHighestBlockYAt(rx, rz);
-            if (highestY <= w.getMinHeight() + 2) continue;
+            int rx = a.cx + rand.nextInt(MAP_RADIUS * 2 + 1) - MAP_RADIUS;
+            int rz = a.cz + rand.nextInt(MAP_RADIUS * 2 + 1) - MAP_RADIUS;
 
-            Block chestBlock = w.getBlockAt(rx, highestY + 1, rz);
-            Block below = w.getBlockAt(rx, highestY, rz);
+            // ★ バリアやガラスなどの透過ブロックを無視して真の地面Yを探す
+            int solidGroundY = findSolidGroundY(w, rx, rz);
+            if (solidGroundY <= w.getMinHeight() + 2) continue;
+
+            Block chestBlock = w.getBlockAt(rx, solidGroundY + 1, rz);
+            Block below = w.getBlockAt(rx, solidGroundY, rz);
             if (!below.getType().isSolid()) continue;
 
             m.blocks().trackFixed(chestBlock, chestBlock.getState());
@@ -186,33 +203,82 @@ public final class SurvivalGamesMode extends WarsMode {
         }
     }
 
+    /** バリアブロック、ガラス、透過・非固体ブロックを無視して上から下に固体を探索 */
+    private int findSolidGroundY(World w, int x, int z) {
+        int maxY = Math.min(w.getMaxHeight() - 1, 319);
+        for (int y = maxY; y > w.getMinHeight(); y--) {
+            Block b = w.getBlockAt(x, y, z);
+            Material mat = b.getType();
+            if (isPassThroughBlock(mat)) continue;
+            return y;
+        }
+        return w.getMinHeight();
+    }
+
+    private boolean isPassThroughBlock(Material m) {
+        if (m.isAir()) return true;
+        if (m == Material.BARRIER || m == Material.LIGHT || m == Material.STRUCTURE_VOID) return true;
+        String name = m.name();
+        if (name.contains("GLASS")) return true; // 全ガラス・板ガラスを無視
+        return !m.isSolid();
+    }
+
+    // ------------------------------------------------------------ ルート抽選 (GUI設定反映)
+    public List<LootEntry> loadLootEntries() {
+        List<LootEntry> entries = new ArrayList<>();
+        ConfigurationSection sec = cfg().getConfigurationSection("custom-loot");
+        if (sec != null) {
+            for (String key : sec.getKeys(false)) {
+                ItemStack it = sec.getItemStack(key + ".item");
+                double chance = sec.getDouble(key + ".chance", 25.0);
+                if (it != null && !it.getType().isAir()) {
+                    entries.add(new LootEntry(it, chance));
+                }
+            }
+        }
+        if (entries.isEmpty()) {
+            return getDefaultLootEntries();
+        }
+        return entries;
+    }
+
+    public void saveLootEntries(List<LootEntry> list) {
+        cfg().set("custom-loot", null);
+        for (int i = 0; i < list.size(); i++) {
+            LootEntry e = list.get(i);
+            cfg().set("custom-loot." + i + ".item", e.item);
+            cfg().set("custom-loot." + i + ".chance", e.chance);
+        }
+        plugin.saveConfig();
+    }
+
+    public List<LootEntry> getDefaultLootEntries() {
+        List<LootEntry> list = new ArrayList<>();
+        list.add(new LootEntry(new ItemStack(Material.COOKED_BEEF, 4), 60.0));
+        list.add(new LootEntry(new ItemStack(Material.COOKED_PORKCHOP, 4), 60.0));
+        list.add(new LootEntry(new ItemStack(Material.APPLE, 1), 8.0));
+        list.add(new LootEntry(new ItemStack(Material.CHAINMAIL_CHESTPLATE), 35.0));
+        list.add(new LootEntry(new ItemStack(Material.IRON_HELMET), 15.0));
+        list.add(new LootEntry(new ItemStack(Material.IRON_SWORD), 25.0));
+        list.add(new LootEntry(new ItemStack(Material.WOODEN_SWORD), 70.0));
+        list.add(new LootEntry(new ItemStack(Material.STICK, 2), 50.0));
+        list.add(new LootEntry(new ItemStack(Material.LAPIS_LAZULI, 3), 30.0));
+        list.add(new LootEntry(new ItemStack(Material.EXPERIENCE_BOTTLE, 2), 20.0));
+        list.add(new LootEntry(new ItemStack(Material.DIAMOND, 1), 3.0));
+        list.add(new LootEntry(new ItemStack(Material.GOLD_INGOT, 3), 15.0));
+        return list;
+    }
+
     private void fillLoot(Inventory inv) {
         inv.clear();
-        // 食料: 焼いた羊肉 / ステーキ / 豚肉 (2~6個) 極稀にリンゴ1個
-        Material[] meats = {Material.COOKED_MUTTON, Material.COOKED_BEEF, Material.COOKED_PORKCHOP};
-        inv.setItem(rand.nextInt(27), new ItemStack(meats[rand.nextInt(meats.length)], 2 + rand.nextInt(5)));
-        if (rand.nextInt(100) < 5) inv.setItem(rand.nextInt(27), new ItemStack(Material.APPLE, 1));
-
-        // 防具: 革・チェーン (低確率で鉄)
-        Material[] armors = {
-                Material.LEATHER_HELMET, Material.LEATHER_CHESTPLATE, Material.LEATHER_LEGGINGS, Material.LEATHER_BOOTS,
-                Material.CHAINMAIL_HELMET, Material.CHAINMAIL_CHESTPLATE, Material.CHAINMAIL_LEGGINGS, Material.CHAINMAIL_BOOTS,
-                Material.IRON_HELMET, Material.IRON_BOOTS
-        };
-        inv.setItem(rand.nextInt(27), new ItemStack(armors[rand.nextInt(armors.length)]));
-
-        // 武器: 木の剣 / 金の剣 / 鉄の剣
-        Material[] weapons = {Material.WOODEN_SWORD, Material.GOLDEN_SWORD, Material.IRON_SWORD};
-        inv.setItem(rand.nextInt(27), new ItemStack(weapons[rand.nextInt(weapons.length)]));
-
-        // 素材・その他: 棒 / ラピス / 経験値瓶(2-3個)
-        inv.setItem(rand.nextInt(27), new ItemStack(Material.STICK, 1 + rand.nextInt(3)));
-        if (rand.nextInt(100) < 30) inv.setItem(rand.nextInt(27), new ItemStack(Material.LAPIS_LAZULI, 2 + rand.nextInt(4)));
-        if (rand.nextInt(100) < 20) inv.setItem(rand.nextInt(27), new ItemStack(Material.EXPERIENCE_BOTTLE, 2 + rand.nextInt(2)));
-
-        // 極稀にダイヤ1個、金インゴット(2-4個)
-        if (rand.nextInt(100) < 3) inv.setItem(rand.nextInt(27), new ItemStack(Material.DIAMOND, 1));
-        if (rand.nextInt(100) < 15) inv.setItem(rand.nextInt(27), new ItemStack(Material.GOLD_INGOT, 2 + rand.nextInt(3)));
+        List<LootEntry> table = loadLootEntries();
+        for (LootEntry entry : table) {
+            double roll = rand.nextDouble() * 100.0;
+            if (roll <= entry.chance) {
+                int slot = rand.nextInt(27);
+                inv.setItem(slot, entry.item.clone());
+            }
+        }
     }
 
     public void checkChestEmpty(Inventory inv) {
@@ -246,13 +312,13 @@ public final class SurvivalGamesMode extends WarsMode {
         }
     }
 
-    // ------------------------------------------------------------ コアイベント実装
+    // ------------------------------------------------------------ コアイベント
     private void chooseCoreLocation(Match m) {
         Arena a = m.arena();
         World w = m.world();
         int rx = a.cx + rand.nextInt(161) - 80;
         int rz = a.cz + rand.nextInt(161) - 80;
-        int y = w.getHighestBlockYAt(rx, rz);
+        int y = findSolidGroundY(w, rx, rz);
         coreTargetLoc = new Location(w, rx + 0.5, y + 1, rz + 0.5);
     }
 
@@ -327,7 +393,6 @@ public final class SurvivalGamesMode extends WarsMode {
         Location dropLoc = coreInteraction.getLocation().clone();
         World w = dropLoc.getWorld();
 
-        // 報酬: ダイヤ装備のいずれか1部位、またはダイヤの剣1つ
         Material[] rewards = {
                 Material.DIAMOND_SWORD, Material.DIAMOND_HELMET,
                 Material.DIAMOND_CHESTPLATE, Material.DIAMOND_LEGGINGS, Material.DIAMOND_BOOTS
@@ -353,8 +418,13 @@ public final class SurvivalGamesMode extends WarsMode {
     // ------------------------------------------------------------ ブロックルール
     @Override
     public boolean canBreak(Match m, MatchPlayer p, Block b) {
-        // チェストは破壊不可、それ以外（シーランタン含む）は全て破壊可能
-        return b.getType() != Material.CHEST;
+        // チェストは破壊不可
+        if (b.getType() == Material.CHEST) return false;
+        // ★ 空を知らせるシーランタンも破壊不可
+        if (b.getType() == Material.SEA_LANTERN && chestLocations.contains(b.getLocation())) {
+            return false;
+        }
+        return true;
     }
 
     // ------------------------------------------------------------ 2ラウンド制＆勝敗判定
@@ -376,7 +446,6 @@ public final class SurvivalGamesMode extends WarsMode {
             return true;
         }
 
-        // 第2ラウンド終了時はそのまま通常終了へ進行
         for (MatchPlayer mp : m.allPlayers()) {
             mp.points = totalRoundScores.getOrDefault(mp.uuid, mp.points);
             mp.kills = totalRoundKills.getOrDefault(mp.uuid, mp.kills);
