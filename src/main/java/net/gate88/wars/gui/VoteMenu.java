@@ -58,7 +58,6 @@ public final class VoteMenu {
         String myVote = lobby.voteOf(p);
         List<WarsMode> modes = plugin.modes().all();
 
-        // スロット 0〜6: 各ゲームモード
         for (int i = 0; i < 7; i++) {
             if (i < modes.size()) {
                 WarsMode md = modes.get(i);
@@ -70,11 +69,9 @@ public final class VoteMenu {
 
         inv.setItem(7, null);
 
-        // スロット 8: ランダム抽選
         boolean rnd = LobbyManager.RANDOM.equals(myVote);
         inv.setItem(RANDOM_SLOT, createRandomItem(plugin, lobby, rnd));
 
-        // OP持ち限定: インベントリ右上 (スロット17) に管理ツールを配置
         if (p.isOp()) {
             inv.setItem(OP_TOOL_SLOT, createAdminToolItem(plugin));
         } else {
@@ -161,8 +158,7 @@ public final class VoteMenu {
                     Msg.c("&b[右クリック] &fKit管理GUIを開く"),
                     Msg.c("&7※インベントリ右上(スロット17)常駐")
             ));
-            meta.addEnchant(Enchantment.UNBREAKING, 1, true);
-            meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            meta.setEnchantmentGlintOverride(true);
             meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "op_tool"), PersistentDataType.BYTE, (byte) 1);
             item.setItemMeta(meta);
         }
@@ -174,7 +170,6 @@ public final class VoteMenu {
         return it.getItemMeta().getPersistentDataContainer().has(new NamespacedKey(plugin, "op_tool"), PersistentDataType.BYTE);
     }
 
-    /** ★ そのアイテムが投票用アイテムであるかを安全に判定 */
     public static boolean isVoteItem(WarsPlugin plugin, ItemStack it) {
         if (it == null || !it.hasItemMeta()) return false;
         return it.getItemMeta().getPersistentDataContainer().has(new NamespacedKey(plugin, "vote_item"), PersistentDataType.BYTE);
@@ -219,11 +214,14 @@ public final class VoteMenu {
             List<net.kyori.adventure.text.Component> l = new ArrayList<>();
             for (String s : lore) l.add(Msg.c(s));
             meta.lore(l);
+
+            // ★ Paper 1.21仕様: ブロックアイテム(チェスト等)でも確実に光るGlint設定
+            meta.setEnchantmentGlintOverride(glow);
             if (glow) {
                 meta.addEnchant(Enchantment.UNBREAKING, 1, true);
                 meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
             }
-            // ★ 投票アイテムタグを埋め込み
+
             meta.getPersistentDataContainer().set(new NamespacedKey(plugin, "vote_item"), PersistentDataType.BYTE, (byte) 1);
             it.setItemMeta(meta);
         }

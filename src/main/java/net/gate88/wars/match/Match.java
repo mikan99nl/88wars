@@ -272,7 +272,8 @@ public final class Match {
         var attr = p.getAttribute(Attribute.MAX_HEALTH);
         p.setHealth(attr != null ? attr.getValue() : 20.0);
         p.setFoodLevel(20);
-        p.setSaturation(20f);
+        // ★ 隠し満腹度を 5.0f に設定 (槍突進や自然回復などのアクションで通常肉ゲージがスムーズに減るように調整)
+        p.setSaturation(5.0f);
         p.setFireTicks(0);
         p.setFallDistance(0f);
         p.setExp(0f);
@@ -597,7 +598,6 @@ public final class Match {
         for (MatchTeam t : teams) if (t.aliveCount() > 0) aliveTeams.add(t);
         if (aliveTeams.size() <= 1) {
             MatchTeam winner = aliveTeams.isEmpty() ? null : aliveTeams.get(0);
-            // モード側でラウンド継続処理が走る場合はMatchをfinishさせない
             if (mode.handleRoundEnd(this, winner)) {
                 return;
             }
@@ -648,6 +648,9 @@ public final class Match {
         }
         pm.save();
 
+        // ★ 直前チーム順位をロビーホログラムへ反映
+        plugin.holograms().setLastTeamRanking(ranking);
+
         MatchPlayer champ = sorted.isEmpty() ? null : sorted.get(0);
         StringBuilder sb = new StringBuilder();
         sb.append("\n&6&l==== 88WARS 結果 ").append("&7(").append(mode.displayName).append(" / ").append(reason).append(")&6&l ====\n");
@@ -655,7 +658,6 @@ public final class Match {
             sb.append("&e&l優勝: &f&l").append(champ.name).append(" &e").append(champ.points).append("pt\n");
         }
 
-        // チーム別順位の表示 (1位: RED, 2位: BLUE...)
         if (mode.teamMode() || teams.size() > 1) {
             sb.append("&6&l--- チーム順位 ---\n");
             for (int i = 0; i < ranking.size(); i++) {

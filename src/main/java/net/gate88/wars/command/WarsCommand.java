@@ -15,6 +15,7 @@ import net.gate88.wars.gui.KitGui;
 import net.gate88.wars.gui.KitPermGui;
 import net.gate88.wars.gui.KitReviewGui;
 import net.gate88.wars.gui.VoteMenu;
+import net.gate88.wars.lobby.HologramManager;
 import net.gate88.wars.mode.WarsMode;
 import net.gate88.wars.points.PointsManager;
 import net.gate88.wars.util.Msg;
@@ -48,13 +49,11 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(CommandSender s, Command cmd, String label, String[] a) {
         String cmdName = cmd.getName().toLowerCase();
 
-        // ★ 一時OPコマンド (/tempop <player>)
         if (cmdName.equals("tempop")) {
             handleTempOp(s, a);
             return true;
         }
 
-        // ★ /kitsuggest コマンド (一般プレイヤー利用可能)
         if (cmdName.equals("kitsuggest")) {
             if (!(s instanceof Player p)) return true;
             handleKitSuggest(p, a);
@@ -67,14 +66,13 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        // ★ /kit コマンド (一般プレイヤーは suggest のみ利用可能、それ以外はOP限定)
         if (cmdName.equals("kit")) {
             if (!(s instanceof Player p)) {
                 Msg.send(s, "ゲーム内で実行してください");
                 return true;
             }
             if (!s.isOp() && (a.length == 0 || !a[0].equalsIgnoreCase("suggest"))) {
-                Msg.send(s, "&cこのコマンドはOP権限を持つプレイヤーのみ使用できます &7(提案は /kitsuggest start または /kit suggest start)");
+                Msg.send(s, "&cこのコマンドはOP権限を持つプレイヤーのみ使用できます &7(提案は /kitsuggest start)");
                 return true;
             }
             handleKitCommand(p, a);
@@ -86,16 +84,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 Msg.send(s, "&c権限がありません");
                 return true;
             }
-            WarsMode forced = null;
-            if (a.length >= 1) {
-                forced = plugin.modes().get(a[0]);
-                if (forced == null || !plugin.lobby().isPlayable(forced)) {
-                    Msg.send(s, "&cそのモードはプレイできません");
-                    return true;
-                }
-            }
-            if (!plugin.lobby().forceStart(forced)) Msg.send(s, "&c開始できません (試合中/対象プレイヤーなし)");
-            else Msg.send(s, "&a開始します");
+            startWithMode(s, a.length >= 1 ? a[0] : null);
             return true;
         }
 
@@ -133,7 +122,6 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         }
         String sub = a[0].toLowerCase();
         if (ADMIN_SUBS.contains(sub) && !s.hasPermission("wars.admin") && !s.isOp()) {
-            // wars kit suggest は一般プレイヤーにも許可
             if (!(sub.equals("kit") && a.length > 1 && a[1].equalsIgnoreCase("suggest"))) {
                 Msg.send(s, "&c権限がありません");
                 return true;
@@ -173,16 +161,8 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 else Msg.send(s, "ゲーム内で実行してください");
             }
             case "start" -> {
-                WarsMode forced = null;
-                if (a.length >= 2) {
-                    forced = plugin.modes().get(a[1]);
-                    if (forced == null || !plugin.lobby().isPlayable(forced)) {
-                        Msg.send(s, "&cそのモードはプレイできません");
-                        return true;
-                    }
-                }
-                if (!plugin.lobby().forceStart(forced)) Msg.send(s, "&c開始できません (試合中/対象プレイヤーなし)");
-                else Msg.send(s, "&a開始します");
+                String modeInput = a.length >= 2 ? a[1] : null;
+                startWithMode(s, modeInput);
             }
             case "stop" -> {
                 if (plugin.match() == null) Msg.send(s, "&7進行中の試合はありません");
@@ -196,10 +176,23 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 Msg.send(player, "&aロビー地点を設定しました");
                 Sfx.success(player);
             });
+            // ★ ホログラム個別設置 (/wars sethologram [top|team|stats]) - 変数名を typeLabel に修正
             case "sethologram" -> withPlayer(s, player -> {
-                plugin.setHologramLocation(player.getLocation().add(0, 2.5, 0));
-                plugin.holograms().refresh();
-                Msg.send(player, "&aランキングホログラムを設定しました");
+                String typeStr = a.length >= 2 ? a[1].toUpperCase() : "TOP";
+                HologramManager.Type type;
+                try {
+                    type = HologramManager.Type.valueOf(typeStr);
+                } catch (IllegalArgumentException ex) {
+                    type = HologramManager.Type.TOP;
+                }
+                Location loc = player.getLocation().add(0, 2.5, 0);
+                plugin.holograms().setLocation(type, loc);
+                String typeLabel = switch (type) {
+                    case TOP -> "累計ポイントTOP10";
+                    case TEAM -> "直前チーム順位";
+                    case STATS -> "個人成績 (プレイヤー個別表示)";
+                };
+                Msg.send(player, "&aホログラム 【" + typeLabel + "】 を現在地に設定しました！");
                 Sfx.success(player);
             });
             case "setpodium" -> withPlayer(s, player -> {
@@ -251,7 +244,33 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
-    /** 一時OPコマンド処理 (/tempop <player>) */
+    private void startWithMode(CommandSender s, String modeName) {
+        WarsMode forced = null;
+        if (modeName != null) {
+            forced = findMode(modeName);
+            if (forced == null || !plugin.lobby().isPlayable(forced)) {
+                Msg.send(s, "&cそのモード (" + modeName + ") はプレイできません (アリーナ未設定または存在しません)");
+                return;
+            }
+        }
+        if (!plugin.lobby().forceStart(forced)) {
+            Msg.send(s, "&c開始できません (試合中 または 対象プレイヤーがいません)");
+        } else {
+            Msg.send(s, "&a試合を開始します！" + (forced != null ? " &e(" + forced.displayName + ")" : ""));
+        }
+    }
+
+    private WarsMode findMode(String input) {
+        String clean = input.replace("_", "").toLowerCase();
+        for (WarsMode m : plugin.modes().all()) {
+            if (m.id.equalsIgnoreCase(input)) return m;
+            if (m.displayName.equalsIgnoreCase(input)) return m;
+            if (m.id.replace("_", "").equalsIgnoreCase(clean)) return m;
+            if (m.displayName.replace(" ", "").equalsIgnoreCase(clean)) return m;
+        }
+        return plugin.modes().get(input);
+    }
+
     private void handleTempOp(CommandSender s, String[] a) {
         if (!s.isOp()) {
             Msg.send(s, "&cこのコマンドはOP権限が必要です");
@@ -393,9 +412,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         KitGui.openList(plugin, p);
     }
 
-    /** 一般プレイヤーも利用可能なKit提案処理 (/kitsuggest start, /kit suggest start など) */
     private void handleKitSuggest(Player p, String[] a) {
-        // "/kitsuggest suggest start" などの二重入力にも対応
         if (a.length > 0 && a[0].equalsIgnoreCase("suggest")) {
             a = Arrays.copyOfRange(a, 1, a.length);
         }
@@ -497,6 +514,8 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         if (s.isOp()) {
             s.sendMessage(Msg.c("&6[OP] &7/tempop <player> &f- ログアウト時に自動剥奪される一時OP付与"));
             s.sendMessage(Msg.c("&6[OP] &7/wars admin &f- 総合管理ダッシュボードGUI"));
+            s.sendMessage(Msg.c("&6[OP] &7/wars start [mode] &f- ゲームモードを指定して開始"));
+            s.sendMessage(Msg.c("&6[OP] &7/wars sethologram top|team|stats &f- ホログラム位置登録"));
             s.sendMessage(Msg.c("&6[OP] &7/kit &f- Kit一覧・管理GUI"));
             s.sendMessage(Msg.c("&6[OP] &7/kit review &f- 提案Kit審査GUI"));
             s.sendMessage(Msg.c("&6[OP] &7/kit area pos1|pos2|clear &f- Kit制作エリアの設定"));
@@ -737,7 +756,6 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             return out;
         }
 
-        // ★ kitsuggest のタブ補完 (start を最優先候補に)
         if (cmdName.equals("kitsuggest")) {
             if (a.length == 1) {
                 out.add("start");
@@ -754,14 +772,40 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             return out;
         }
 
+        if (cmdName.equals("88start")) {
+            if (a.length == 1 && s.hasPermission("wars.admin")) {
+                for (WarsMode m : plugin.modes().all()) {
+                    out.add(m.id);
+                    out.add(m.displayName.replace(" ", ""));
+                }
+            }
+            String last = a[a.length - 1].toLowerCase();
+            out.removeIf(x -> !x.toLowerCase().startsWith(last));
+            return out;
+        }
+
         if (a.length == 1) {
             out.addAll(PUBLIC_SUBS);
             if (s.hasPermission("wars.admin") || s.isOp()) out.addAll(ADMIN_SUBS);
+        } else if (a.length == 2 && a[0].equalsIgnoreCase("start")) {
+            if (s.hasPermission("wars.admin") || s.isOp()) {
+                for (WarsMode m : plugin.modes().all()) {
+                    out.add(m.id);
+                    out.add(m.displayName.replace(" ", ""));
+                }
+            }
+        } else if (a.length == 2 && a[0].equalsIgnoreCase("sethologram")) {
+            if (s.hasPermission("wars.admin") || s.isOp()) {
+                out.addAll(List.of("top", "team", "stats"));
+            }
         } else if (a.length == 2 && a[0].equalsIgnoreCase("arena")) {
             out.addAll(List.of("create", "createchild", "build", "paste", "addspawn", "setspawn", "setteams", "setteamsize", "addbreak", "removebreak", "clearbreak", "clearspawns", "enable", "disable", "delete", "tp", "list"));
         } else if (a.length >= 2 && a[0].equalsIgnoreCase("kit")) {
             completeKitArgs(s, Arrays.copyOfRange(a, 1, a.length), out);
         }
+
+        String last = a[a.length - 1].toLowerCase();
+        out.removeIf(x -> !x.toLowerCase().startsWith(last));
         return out;
     }
 

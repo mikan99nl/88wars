@@ -62,6 +62,7 @@ public final class LobbyListener implements Listener {
                 VoteMenu.giveItems(plugin, p);
             }
             Colors.applyLobbyDisplay(p);
+            plugin.holograms().refreshStats(p);
         });
     }
 
@@ -69,7 +70,6 @@ public final class LobbyListener implements Listener {
     public void onQuit(PlayerQuitEvent e) {
         Player p = e.getPlayer();
 
-        // 一時OPを付与した本人がログアウトした時、相手の一時OPを自動剥奪
         plugin.onGranterQuit(p.getUniqueId());
 
         Match m = plugin.match();
@@ -78,6 +78,7 @@ public final class LobbyListener implements Listener {
         plugin.kits().stopSuggesting(p);
         plugin.removeSidebar(p);
         Colors.applyLobbyDisplay(p);
+        plugin.holograms().removeStats(p.getUniqueId());
     }
 
     @EventHandler
@@ -85,13 +86,14 @@ public final class LobbyListener implements Listener {
         plugin.clearTrackedTridents();
         e.setRespawnLocation(plugin.lobby().lobbyLocation());
         plugin.getServer().getScheduler().runTask(plugin, () -> {
+            // ★ 修正箇所: plugin 引数を正しく渡す
             if (inLobby(e.getPlayer()) && !plugin.kits().isInKitArea(e.getPlayer().getLocation())) {
                 VoteMenu.giveItems(plugin, e.getPlayer());
             }
+            plugin.holograms().refreshStats(e.getPlayer());
         });
     }
 
-    /** Kit制作エリアへの進入・退出・移動監視 */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent e) {
         Player p = e.getPlayer();
@@ -100,7 +102,6 @@ public final class LobbyListener implements Listener {
         boolean wasIn = plugin.kits().isInKitArea(e.getFrom());
         boolean nowIn = plugin.kits().isInKitArea(e.getTo());
 
-        // 1. エリア進入時
         if (!wasIn && nowIn) {
             p.getInventory().clear();
 
@@ -117,9 +118,7 @@ public final class LobbyListener implements Listener {
                 }
             }
             p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.5f);
-        }
-        // 2. エリア退出時: 強制的にアドベンチャーモードに上書き
-        else if (wasIn && !nowIn) {
+        } else if (wasIn && !nowIn) {
             plugin.kits().stopSuggesting(p);
             plugin.getServer().getScheduler().runTask(plugin, () -> {
                 if (!p.isOnline() || !inLobby(p)) return;
@@ -130,9 +129,7 @@ public final class LobbyListener implements Listener {
                 Msg.send(p, "&e[Kit制作エリア] &fエリアから出ました。アドベンチャーモードに戻し、投票アイテムを付与しました。");
                 p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 1.0f);
             });
-        }
-        // 3. エリア内で /kitsuggest start 中の一般プレイヤーが「動いた」場合のペナルティ
-        else if (wasIn && plugin.kits().isSuggesting(p)) {
+        } else if (wasIn && plugin.kits().isSuggesting(p)) {
             if (e.getFrom().getX() != e.getTo().getX()
                     || e.getFrom().getY() != e.getTo().getY()
                     || e.getFrom().getZ() != e.getTo().getZ()) {
@@ -149,7 +146,6 @@ public final class LobbyListener implements Listener {
         }
     }
 
-    // ------------------------------------------------ 一般プレイヤーのエリア内行動制限
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent e) {
         Player p = e.getPlayer();
@@ -212,12 +208,15 @@ public final class LobbyListener implements Listener {
         }
     }
 
+    /** 満腹度制御: ロビー内のみ20固定、試合中は槍突進・スプリント・回復で正常に減少 */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onFood(FoodLevelChangeEvent e) {
-        if (e.getEntity() instanceof Player p) {
-            e.setCancelled(true);
-            p.setFoodLevel(20);
+        if (!(e.getEntity() instanceof Player p)) return;
+        if (!inLobby(p)) {
+            return;
         }
+        e.setCancelled(true);
+        p.setFoodLevel(20);
     }
 
     @EventHandler
@@ -276,7 +275,6 @@ public final class LobbyListener implements Listener {
             if (e.getClickedInventory() == e.getView().getTopInventory()) kg.click(p, e.getSlot(), e.getClick());
             return;
         }
-        // ★ AdminGui の処理: 上部・下部インベントリ両方を考慮して渡す
         if (holder instanceof AdminGui ag) {
             e.setCancelled(true);
             if (!p.hasPermission("wars.admin")) return;
