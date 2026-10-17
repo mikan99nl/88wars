@@ -11,9 +11,18 @@ import org.bukkit.Material;
 import org.bukkit.World;
 
 /**
- * アリーナ定義 (親アリーナ・子アリーナ階層構造対応)
+ * アリーナ定義 (親アリーナ・子アリーナ階層構造 / トーナメント適用モード対応)
  */
 public final class Arena {
+    public enum ApplicableMode {
+        BOTH("両方 (DUO/TEAM)"),
+        DUO_ONLY("DUO限定"),
+        TEAM_ONLY("TEAM限定");
+
+        public final String label;
+        ApplicableMode(String label) { this.label = label; }
+    }
+
     public final String id;
     public String modeId;
     public String worldName;
@@ -21,6 +30,9 @@ public final class Arena {
     public final List<Pos> spawns = new ArrayList<>();
     public boolean enabled = true;
     public String map;
+
+    // ★ アリーナ適用モード区分 (両方 / DUO限定 / TEAM限定)
+    public ApplicableMode applicableMode = ApplicableMode.BOTH;
 
     // ★ 親子アリーナ関係 (parentId が null なら親、存在すれば子)
     public String parentId = null;
@@ -89,8 +101,11 @@ public final class Arena {
         return this;
     }
 
+    // ★ スポーン地点の数がそのまま受け入れられるチーム数となる (最大チーム数未指定時は spawns.size())
     public int getEffectiveMaxTeams(ArenaManager manager) {
-        return getEffectiveParent(manager).maxTeams;
+        Arena eff = getEffectiveParent(manager);
+        if (eff.maxTeams > 0) return eff.maxTeams;
+        return Math.max(2, eff.spawns.size());
     }
 
     public int getEffectiveTeamSize(ArenaManager manager) {

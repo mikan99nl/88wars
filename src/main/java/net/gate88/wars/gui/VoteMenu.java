@@ -215,7 +215,7 @@ public final class VoteMenu {
             for (String s : lore) l.add(Msg.c(s));
             meta.lore(l);
 
-            // ★ Paper 1.21仕様: ブロックアイテム(チェスト等)でも確実に光るGlint設定
+            // ★ Paper 1.21仕様: 正確にエンチャント光沢をオーバーライド
             meta.setEnchantmentGlintOverride(glow);
             if (glow) {
                 meta.addEnchant(Enchantment.UNBREAKING, 1, true);

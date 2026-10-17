@@ -34,6 +34,13 @@ public final class ArenaManager {
             arena.parentId = a.getString("parentId", null);
             arena.childIds.addAll(a.getStringList("childIds"));
 
+            // ★ 適用モードの読み込み (デフォルト BOTH)
+            try {
+                arena.applicableMode = Arena.ApplicableMode.valueOf(a.getString("applicableMode", "BOTH"));
+            } catch (Exception ex) {
+                arena.applicableMode = Arena.ApplicableMode.BOTH;
+            }
+
             arena.maxTeams = a.getInt("maxTeams", 0);
             arena.teamSize = a.getInt("teamSize", 0);
             arena.customTimingEnabled = a.getBoolean("customTimingEnabled", false);
@@ -70,6 +77,9 @@ public final class ArenaManager {
             plugin.data().set(p + "parentId", a.parentId);
             plugin.data().set(p + "childIds", a.childIds);
 
+            // ★ 適用モードの保存
+            plugin.data().set(p + "applicableMode", a.applicableMode.name());
+
             plugin.data().set(p + "maxTeams", a.maxTeams);
             plugin.data().set(p + "teamSize", a.teamSize);
             plugin.data().set(p + "customTimingEnabled", a.customTimingEnabled);
@@ -99,7 +109,6 @@ public final class ArenaManager {
         return a;
     }
 
-    /** ★ 子アリーナを作成 */
     public Arena createChild(String parentId, String childId) {
         Arena parent = get(parentId);
         if (parent == null) return null;
@@ -116,11 +125,9 @@ public final class ArenaManager {
     public boolean delete(String id) {
         Arena a = arenas.remove(id.toLowerCase());
         if (a != null) {
-            // 親なら子も削除
             for (String cId : a.childIds) {
                 arenas.remove(cId.toLowerCase());
             }
-            // 子なら親のリストから除外
             if (a.isChild()) {
                 Arena parent = get(a.parentId);
                 if (parent != null) parent.childIds.remove(a.id);
@@ -135,11 +142,28 @@ public final class ArenaManager {
         return new ArrayList<>(arenas.values());
     }
 
+    // ★ モード区分（DUO/TEAM/両方）に応じたアリーナ抽出
     public List<Arena> readyFor(String modeId) {
         List<Arena> l = new ArrayList<>();
         for (Arena a : arenas.values()) {
-            if (modeId.equalsIgnoreCase(a.modeId) && a.isReady()) l.add(a);
+            if (!a.isReady()) continue;
+            if (matchesMode(a, modeId)) l.add(a);
         }
         return l;
+    }
+
+    public boolean matchesMode(Arena a, String modeId) {
+        if (modeId == null) return false;
+        String mLower = modeId.toLowerCase();
+
+        if (mLower.contains("duo")) {
+            return ("randomizer".equalsIgnoreCase(a.modeId) || a.modeId.toLowerCase().contains("randomizer"))
+                    && (a.applicableMode == Arena.ApplicableMode.BOTH || a.applicableMode == Arena.ApplicableMode.DUO_ONLY);
+        }
+        if (mLower.contains("team")) {
+            return ("randomizer".equalsIgnoreCase(a.modeId) || a.modeId.toLowerCase().contains("randomizer"))
+                    && (a.applicableMode == Arena.ApplicableMode.BOTH || a.applicableMode == Arena.ApplicableMode.TEAM_ONLY);
+        }
+        return a.modeId.equalsIgnoreCase(modeId);
     }
 }

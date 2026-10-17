@@ -74,7 +74,6 @@ public final class Match {
         List<Player> list = new ArrayList<>(participants);
         Collections.shuffle(list);
 
-        // ★ 親アリーナ設定も考慮してチーム数・人数を決定
         int effectiveTeams = arena.getEffectiveMaxTeams(plugin.arenas());
         int effectiveTeamSize = arena.getEffectiveTeamSize(plugin.arenas());
 
@@ -158,7 +157,6 @@ public final class Match {
         plugin.clearTrackedTridents();
         cleanWorldEntities();
 
-        // ★ 大元モード設定またはアリーナ個別設定からブレイクディレイを取得
         int breakDelay = arena.getBreakDelay(mode.breakDelaySeconds(), plugin.arenas());
         if (breakDelay <= 0) {
             breakConfiguredArenaBlocks();
@@ -168,6 +166,7 @@ public final class Match {
             blocksBroken = false;
         }
 
+        // 初期スポーン (トーナメント時はモード側で各ペアアリーナへ配置)
         for (MatchTeam t : teams) {
             Pos sp = !arena.spawns.isEmpty()
                     ? arena.spawns.get(t.index % arena.spawns.size())
@@ -220,7 +219,6 @@ public final class Match {
         }
     }
 
-    /** ラウンド制モード用の再初期化 */
     public void resetForNextRound() {
         elapsed = 0;
         state = State.PREPARING;
@@ -272,8 +270,7 @@ public final class Match {
         var attr = p.getAttribute(Attribute.MAX_HEALTH);
         p.setHealth(attr != null ? attr.getValue() : 20.0);
         p.setFoodLevel(20);
-        // ★ 隠し満腹度を 5.0f に設定 (槍突進や自然回復などのアクションで通常肉ゲージがスムーズに減るように調整)
-        p.setSaturation(5.0f);
+        p.setSaturation(20f);
         p.setFireTicks(0);
         p.setFallDistance(0f);
         p.setExp(0f);
@@ -343,7 +340,8 @@ public final class Match {
         if (isOver()) return;
 
         if (elapsed >= matchDuration()) {
-            finish(mode.pickTimeUpWinner(this), "時間切れ");
+            MatchTeam winner = mode.pickTimeUpWinner(this);
+            if (winner != null) finish(winner, "時間切れ");
             return;
         }
         updateSidebars();
@@ -543,7 +541,6 @@ public final class Match {
 
         recentDamagers.remove(victim.uuid);
 
-        // ★ 先殺ボーナス (誰かが死亡した際、その時点で生存している他プレイヤー全員にポイント付与)
         int placeBonus = mode.placementBonusPoints();
         if (placeBonus > 0) {
             for (MatchPlayer mp : players.values()) {
@@ -648,7 +645,6 @@ public final class Match {
         }
         pm.save();
 
-        // ★ 直前チーム順位をロビーホログラムへ反映
         plugin.holograms().setLastTeamRanking(ranking);
 
         MatchPlayer champ = sorted.isEmpty() ? null : sorted.get(0);

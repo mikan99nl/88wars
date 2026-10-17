@@ -5,6 +5,7 @@ import java.util.List;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.arena.Arena;
 import net.gate88.wars.arena.ArenaBuilder;
+import net.gate88.wars.lobby.HologramManager;
 import net.gate88.wars.mode.SurvivalGamesMode;
 import net.gate88.wars.mode.WarsMode;
 import net.gate88.wars.util.Msg;
@@ -98,6 +99,7 @@ public final class AdminGui implements InventoryHolder {
             for (String s : lore) l.add(Msg.c(s));
             meta.lore(l);
             if (glow) {
+                meta.setEnchantmentGlintOverride(true);
                 meta.addEnchant(Enchantment.UNBREAKING, 1, true);
                 meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
             }
@@ -140,7 +142,7 @@ public final class AdminGui implements InventoryHolder {
         put(16, item(Material.PLAYER_HEAD, "&b&l【Kit権限管理】 &c[OP限定]", List.of("&7誰がKit追加/クリエイティブ権限を持つか管理 (/kit perm)", "&eクリックして開く")), "open_perm_gui");
 
         put(28, item(Material.REDSTONE_TORCH, "&d&l【ロビー＆システム設定】", List.of("&7開始人数、カウントダウン秒数、投票配布ON/OFF等", "&eクリックして開く")), "page:LOBBY_SETTINGS");
-        put(30, item(Material.COMPASS, "&9&l【ロビー位置・ホログラム設定】", List.of("&7ロビー地点、ランキング、表彰台1〜3位の現在地設定", "&eクリックして開く")), "page:LOCATIONS");
+        put(30, item(Material.COMPASS, "&9&l【ロビー位置・ホログラム設定】", List.of("&7ロビー地点、ホログラム3種、表彰台1〜3位の設定", "&eクリックして開く")), "page:LOCATIONS");
         put(32, item(Material.EMERALD, "&a&l【ポイント＆ランキング設定】", List.of("&7キルポイント、生存ポイント、間隔の設定", "&eクリックして開く")), "page:POINTS_SETTINGS");
         put(34, item(Material.NETHER_STAR, "&c&l【試合コントロール】", List.of("&a左クリック: 試合を今すぐ開始", "&c右クリック: 進行中の試合を中止")), "match_control");
 
@@ -190,25 +192,25 @@ public final class AdminGui implements InventoryHolder {
 
             modeToggles.add(new Toggle(prefix + "enabled", "モード有効化", Material.REPEATER, new String[]{"true", "false"}, "true"));
 
-            // チェスト中身GUIボタン
             put(24, item(Material.CHEST, "&6&l【チェスト中身＆確率設定GUI】", List.of(
                     "&7チェストから出現するアイテムと",
                     "&7それぞれの出現確率(%)を設定します", "", "&eクリックして開く"
             ), true), "open_sg_loot");
 
-            // ★ コア報酬設定GUIボタン
             put(25, item(Material.LODESTONE, "&b&l【コア報酬アイテム設定GUI】", List.of(
                     "&7HP100のコア破壊時に",
                     "&7ドロップするアイテムを設定します", "", "&eクリックして開く"
             ), true), "open_sg_core_loot");
         } else {
+            // ★ Randomizer: トーナメントラウンド間インターバル(秒) を追加
             modeNums.addAll(List.of(
                     new Num(prefix + "duration-seconds", "試合時間(秒)", Material.CLOCK, 30, 30, 900, true, 180),
                     new Num(prefix + "break-delay-seconds", "ブロック開放までの待機(秒)", Material.IRON_BARS, 1, 0, 60, true, 0),
                     new Num(prefix + "grace-seconds", "装備配布までの猶予(秒)", Material.CHEST, 1, 0, 30, true, 5),
+                    new Num(prefix + "round-interval-seconds", "トーナメント ラウンド間待機(秒)", Material.REPEATER, 1, 5, 60, true, 10),
                     new Num(prefix + "block-decay-seconds", "設置ブロック崩壊(秒)", Material.WHITE_WOOL, 1, 0, 60, true, 12),
                     new Num(prefix + "min-players", "最低必要人数", Material.PLAYER_HEAD, 1, 1, 16, true, 2),
-                    new Num(prefix + "team-count", "チーム数 (0=自動/team-size準拠)", Material.WHITE_BANNER, 1, 0, 8, true, 0),
+                    new Num(prefix + "team-count", "チーム数 (0=自動/team-size準拠)", Material.WHITE_BANNER, 1, 0, 16, true, 0),
                     new Num(prefix + "team-size", "1チームの人数", Material.ARMOR_STAND, 1, 1, 8, true, 1),
                     new Num(prefix + "wool-stacks", "羊毛スタック数", Material.SHEARS, 1, 1, 6, true, 3),
                     new Num(prefix + "border.start-radius", "ボーダー初期半径", Material.RED_STAINED_GLASS, 2, 10, 60, true, 28),
@@ -285,7 +287,6 @@ public final class AdminGui implements InventoryHolder {
         )), null);
     }
 
-    /** ★ コア破壊時ドロップ設定GUI */
     private void renderSgCoreLoot() {
         WarsMode mode = plugin.modes().get("survivalgames");
         if (!(mode instanceof SurvivalGamesMode sg)) {
@@ -325,6 +326,7 @@ public final class AdminGui implements InventoryHolder {
             List<String> lore = new ArrayList<>();
             lore.add("&7モード: &f" + (md == null ? a.modeId : md.displayName));
             lore.add("&7状態: " + (a.enabled ? "&a有効" : "&6編集中"));
+            lore.add("&b★ 適用対象: &e" + a.applicableMode.label);
             if (a.isChild()) {
                 lore.add("&d★ 子アリーナ (親: " + a.parentId + ")");
                 lore.add("&7※親アリーナの設定を参照・同期中");
@@ -332,7 +334,7 @@ public final class AdminGui implements InventoryHolder {
                 lore.add("&b★ 親アリーナ (子: " + a.childIds.size() + "個)");
             }
             lore.add("&7中心: &f" + a.cx + ", " + a.cy + ", " + a.cz);
-            lore.add("&7スポーン地点数: &f" + a.spawns.size() + "個");
+            lore.add("&7スポーン数(収容チーム数): &f" + a.spawns.size() + "チーム");
             lore.add("");
             lore.add("&e左クリック: &fアリーナ設定・子アリーナ管理を開く");
             lore.add("&b右クリック: &fアリーナへテレポート");
@@ -363,6 +365,7 @@ public final class AdminGui implements InventoryHolder {
         infoLore.add("&7ワールド: &f" + a.worldName);
         infoLore.add("&7中心座標: &f" + a.cx + ", " + a.cy + ", " + a.cz);
         infoLore.add("&7モード: &f" + a.modeId + (isSG ? " &6(300×300 SG仕様)" : ""));
+        infoLore.add("&b★ 適用区分: &e" + a.applicableMode.label);
         if (a.isChild()) {
             infoLore.add("&d★ 子アリーナ (親アリーナ: " + a.parentId + " の設定を同期中)");
         } else {
@@ -371,6 +374,16 @@ public final class AdminGui implements InventoryHolder {
         put(4, item(a.isReady() ? Material.GRASS_BLOCK : Material.DEAD_BUSH, "&e&lアリーナ: " + a.id, infoLore), null);
 
         put(19, item(Material.ENDER_PEARL, "&bアリーナの中心へテレポート", List.of("&7中心座標へワープします")), "atp:" + a.id);
+
+        // ★ アリーナ適用モード切り替えボタン (スロット20)
+        String nextModeLabel = switch (a.applicableMode) {
+            case BOTH -> "DUO限定";
+            case DUO_ONLY -> "TEAM限定";
+            case TEAM_ONLY -> "両方 (DUO/TEAM)";
+        };
+        put(20, item(Material.COMPARATOR, "&e適用モード区分: &a" + a.applicableMode.label,
+                List.of("&7トーナメント時、どっちの形式で使用するか設定", "", "&7クリックで切り替え: &b" + nextModeLabel)), "atog_applicable:" + a.id);
+
         put(21, item(a.enabled ? Material.LIME_DYE : Material.GRAY_DYE,
                 a.enabled ? "&a【有効中】 (試合で使用されます)" : "&6【編集中】 (試合で使用されません)",
                 List.of("&7クリックで 有効 / 編集中 を切り替え")), "atog_enabled:" + a.id);
@@ -378,7 +391,7 @@ public final class AdminGui implements InventoryHolder {
         put(22, item(Material.CLOCK, "&e&l【アリーナ個別時間・ルール設定】",
                 List.of((a.customTimingEnabled ? "&a● 個別設定: 有効中" : "&7● 個別設定: 無効中 (大元設定を使用)"), "", "&eクリックして開く"), a.customTimingEnabled), "page:ARENA_TIMING_SETTINGS:" + a.id);
 
-        put(23, item(Material.WHITE_BANNER, "&e最大チーム数: &6" + (a.maxTeams == 0 ? "自動(モード準拠)" : a.maxTeams + "チーム"),
+        put(23, item(Material.WHITE_BANNER, "&e最大チーム数: &6" + (a.maxTeams == 0 ? "自動(スポーン数準拠: " + a.spawns.size() + ")" : a.maxTeams + "チーム"),
                 List.of("&7左クリック: +1チーム", "&7右クリック: -1チーム", "&d[Qキー] リセット")), "ateams:" + a.id);
 
         put(25, item(Material.PLAYER_HEAD, "&e1チームの最大人数: &6" + (a.teamSize == 0 ? "自動(モード準拠)" : a.teamSize + "人"),
@@ -490,11 +503,26 @@ public final class AdminGui implements InventoryHolder {
     }
 
     private void renderLocations() {
-        put(20, item(Material.RED_BED, "&a&lロビー地点を現在地に設定", List.of("&7参加時や試合終了後の転送先")), "loc:setlobby");
-        put(22, item(Material.OAK_SIGN, "&a&lランキングホログラムを現在地に設定", List.of("&7現在立っている足元の上に表示")), "loc:sethologram");
-        put(24, item(Material.GOLD_BLOCK, "&6&l表彰台 1位 を現在地に設定", List.of("&7優勝者のスタンド位置")), "loc:setpodium:1");
-        put(32, item(Material.IRON_BLOCK, "&f&l表彰台 2位 を現在地に設定", List.of("&72位のスタンド位置")), "loc:setpodium:2");
-        put(34, item(Material.COPPER_BLOCK, "&c&l表彰台 3位 を現在地に設定", List.of("&73位のスタンド位置")), "loc:setpodium:3");
+        put(11, item(Material.RED_BED, "&a&l【ロビー地点】を現在地に設定", List.of("&7ゲーム参加時や終了後の転送先")), "loc:setlobby");
+
+        put(13, item(Material.EMERALD, "&e&l【累計ポイントTOP10 ホログラム】を現在地に設定", List.of(
+                "&7累計ポイントランキングTOP10を表示する",
+                "&7ホログラムの位置を現在地に更新します"
+        ), true), "loc:sethologram:top");
+
+        put(15, item(Material.WHITE_BANNER, "&6&l【直前チーム順位 ホログラム】を現在地に設定", List.of(
+                "&7直前の試合結果（1位: RED, 2位: BLUE…）を",
+                "&7表示するホログラムの位置を現在地に更新します"
+        ), true), "loc:sethologram:team");
+
+        put(22, item(Material.PLAYER_HEAD, "&b&l【個人成績 ホログラム】を現在地に設定", List.of(
+                "&7プレイヤー本人の戦績（個別表示）を",
+                "&7表示するホログラムの位置を現在地に更新します"
+        ), true), "loc:sethologram:stats");
+
+        put(29, item(Material.GOLD_BLOCK, "&6&l表彰台 1位 を現在地に設定", List.of("&7優勝者のスタンド位置")), "loc:setpodium:1");
+        put(31, item(Material.IRON_BLOCK, "&f&l表彰台 2位 を現在地に設定", List.of("&72位のスタンド位置")), "loc:setpodium:2");
+        put(33, item(Material.COPPER_BLOCK, "&c&l表彰台 3位 を現在地に設定", List.of("&73位のスタンド位置")), "loc:setpodium:3");
 
         put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
@@ -525,7 +553,6 @@ public final class AdminGui implements InventoryHolder {
     public void click(Player p, int slot, ClickType type, ItemStack clickedItem) {
         String act = actions.get(slot);
 
-        // ★ SG_LOOT画面で自分のインベントリをクリックした場合は新規登録
         if (page == Page.SG_LOOT && act == null && clickedItem != null && !clickedItem.getType().isAir()) {
             WarsMode mode = plugin.modes().get("survivalgames");
             if (mode instanceof SurvivalGamesMode sg) {
@@ -542,7 +569,6 @@ public final class AdminGui implements InventoryHolder {
             return;
         }
 
-        // ★ SG_CORE_LOOT画面で自分のインベントリをクリックした場合は新規登録
         if (page == Page.SG_CORE_LOOT && act == null && clickedItem != null && !clickedItem.getType().isAir()) {
             WarsMode mode = plugin.modes().get("survivalgames");
             if (mode instanceof SurvivalGamesMode sg) {
@@ -584,7 +610,6 @@ public final class AdminGui implements InventoryHolder {
             return;
         }
 
-        // SG ルート設定操作
         if (act.startsWith("sgloot_mod:")) {
             int idx = Integer.parseInt(act.substring(11));
             WarsMode mode = plugin.modes().get("survivalgames");
@@ -618,7 +643,6 @@ public final class AdminGui implements InventoryHolder {
             return;
         }
 
-        // SG コア報酬設定操作
         if (act.startsWith("sgcore_mod:")) {
             int idx = Integer.parseInt(act.substring(11));
             WarsMode mode = plugin.modes().get("survivalgames");
@@ -728,6 +752,23 @@ public final class AdminGui implements InventoryHolder {
             }
             return;
         }
+
+        // ★ アリーナ適用モード切り替え (BOTH -> DUO_ONLY -> TEAM_ONLY -> BOTH)
+        if (act.startsWith("atog_applicable:")) {
+            Arena a = plugin.arenas().get(act.substring(16));
+            if (a != null) {
+                a.applicableMode = switch (a.applicableMode) {
+                    case BOTH -> Arena.ApplicableMode.DUO_ONLY;
+                    case DUO_ONLY -> Arena.ApplicableMode.TEAM_ONLY;
+                    case TEAM_ONLY -> Arena.ApplicableMode.BOTH;
+                };
+                plugin.arenas().save();
+                Msg.send(p, "&aアリーナ &e" + a.id + " &aの適用モードを &b【" + a.applicableMode.label + "】 &aに設定しました");
+                render(p);
+            }
+            return;
+        }
+
         if (act.startsWith("atog_enabled:")) {
             Arena a = plugin.arenas().get(act.substring(13));
             if (a != null) {
@@ -949,10 +990,21 @@ public final class AdminGui implements InventoryHolder {
             if (locAct.equals("setlobby")) {
                 plugin.setLobbyLocation(p.getLocation());
                 Msg.send(p, "&aロビー地点を設定しました");
-            } else if (locAct.equals("sethologram")) {
-                plugin.setHologramLocation(p.getLocation().add(0, 2.5, 0));
-                plugin.holograms().refresh();
-                Msg.send(p, "&aランキングホログラムを設定しました");
+            } else if (locAct.startsWith("sethologram")) {
+                String typeStr = locAct.contains(":") ? locAct.split(":")[1].toUpperCase() : "TOP";
+                HologramManager.Type holoType = switch (typeStr) {
+                    case "TEAM" -> HologramManager.Type.TEAM;
+                    case "STATS" -> HologramManager.Type.STATS;
+                    default -> HologramManager.Type.TOP;
+                };
+                Location loc = p.getLocation().add(0, 2.5, 0);
+                plugin.holograms().setLocation(holoType, loc);
+                String labelName = switch (holoType) {
+                    case TOP -> "累計ポイントTOP10";
+                    case TEAM -> "直前チーム順位";
+                    case STATS -> "個人成績 (個別表示)";
+                };
+                Msg.send(p, "&aホログラム 【" + labelName + "】 を現在地に設定しました！");
             } else if (locAct.startsWith("setpodium:")) {
                 int r = Integer.parseInt(locAct.substring(10));
                 plugin.setPodiumLocation(r, p.getLocation());
