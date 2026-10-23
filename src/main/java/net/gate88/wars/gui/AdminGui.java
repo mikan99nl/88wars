@@ -6,6 +6,8 @@ import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.arena.Arena;
 import net.gate88.wars.arena.ArenaBuilder;
 import net.gate88.wars.lobby.HologramManager;
+import net.gate88.wars.match.Match;
+import net.gate88.wars.mode.SpleefMode;
 import net.gate88.wars.mode.SurvivalGamesMode;
 import net.gate88.wars.mode.WarsMode;
 import net.gate88.wars.util.Msg;
@@ -159,7 +161,6 @@ public final class AdminGui implements InventoryHolder {
             lore.add("");
             lore.add("&7状態: " + (enabled ? "&a有効" : "&c無効"));
             lore.add("&7試合時間: &f" + m.durationSeconds() + "秒");
-            lore.add("&7ブロック開放時間: &e" + m.breakDelaySeconds() + "秒");
             lore.add("&7猶予時間: &f" + m.graceSeconds() + "秒");
             lore.add("");
             lore.add("&eクリックして詳細設定を変更");
@@ -173,14 +174,35 @@ public final class AdminGui implements InventoryHolder {
     }
 
     private void renderModeSettings() {
-        if (targetId == null) { renderModes(); return; }
+        if (targetId == null) {
+            renderModes();
+            return;
+        }
         String prefix = "modes." + targetId + ".";
         boolean isSG = targetId.equalsIgnoreCase("survivalgames") || targetId.equalsIgnoreCase("survival_games");
+        boolean isSpleef = targetId.equalsIgnoreCase("spleef");
 
         List<Num> modeNums = new ArrayList<>();
         List<Toggle> modeToggles = new ArrayList<>();
 
-        if (isSG) {
+        if (isSpleef) {
+            modeNums.add(new Num(prefix + "upgrade-mine-count", "ダイヤスコップ必要採掘数", Material.DIAMOND_SHOVEL, 1, 5, 100, true, 20));
+            modeNums.add(new Num(prefix + "snowball-mine-count", "雪玉付与採掘間隔", Material.SNOWBALL, 1, 5, 100, true, 25));
+            modeNums.add(new Num(prefix + "border.start-radius", "ボーダー初期半径(サイズ)", Material.RED_STAINED_GLASS, 2, 10, 60, true, 30));
+            modeNums.add(new Num(prefix + "border.shrink-start", "ボーダー開始猶予(秒)", Material.CLOCK, 5, 5, 180, true, 30));
+            modeNums.add(new Num(prefix + "border.speed", "ボーダー縮小速度(マス/秒)", Material.SUGAR, 0.05, 0.05, 2.0, false, 0.2));
+            modeNums.add(new Num(prefix + "auto-skip-seconds", "Skip投票自動発動(秒/0=無効)", Material.COMPARATOR, 15, 0, 900, true, 180));
+            modeNums.add(new Num(prefix + "hard-limit-seconds", "強制終了最大時間(秒/0=無効)", Material.BARRIER, 30, 0, 1800, true, 300));
+            modeNums.add(new Num(prefix + "skip.min-votes", "Skip最低必要賛成数", Material.PLAYER_HEAD, 1, 1, 16, true, 3));
+            modeNums.add(new Num(prefix + "skip.percent", "Skip必要賛成割合(%)", Material.PAPER, 5, 10, 100, true, 50));
+
+            modeToggles.add(new Toggle(prefix + "enabled", "モード有効化", Material.REPEATER, new String[]{"true", "false"}, "true"));
+
+            Match curM = plugin.match();
+            if (curM != null && curM.mode() instanceof SpleefMode) {
+                put(25, item(Material.BELL, "&6&l【今すぐSkip投票を開始】", List.of("&7膠着防止のためSkip投票を全体に発議します", "&eクリックして開始")), "trigger_spleef_skip");
+            }
+        } else if (isSG) {
             modeNums.add(new Num(prefix + "duration-seconds", "1ラウンド試合時間(秒)", Material.CLOCK, 30, 60, 1800, true, 900));
             modeNums.add(new Num(prefix + "pvp-grace-seconds", "PvP解禁猶予(秒)", Material.SHIELD, 15, 0, 600, true, 90));
             modeNums.add(new Num(prefix + "chest-count", "初期チェスト生成数", Material.CHEST, 10, 10, 500, true, 200));
@@ -192,17 +214,9 @@ public final class AdminGui implements InventoryHolder {
 
             modeToggles.add(new Toggle(prefix + "enabled", "モード有効化", Material.REPEATER, new String[]{"true", "false"}, "true"));
 
-            put(24, item(Material.CHEST, "&6&l【チェスト中身＆確率設定GUI】", List.of(
-                    "&7チェストから出現するアイテムと",
-                    "&7それぞれの出現確率(%)を設定します", "", "&eクリックして開く"
-            ), true), "open_sg_loot");
-
-            put(25, item(Material.LODESTONE, "&b&l【コア報酬アイテム設定GUI】", List.of(
-                    "&7HP100のコア破壊時に",
-                    "&7ドロップするアイテムを設定します", "", "&eクリックして開く"
-            ), true), "open_sg_core_loot");
+            put(24, item(Material.CHEST, "&6&l【チェスト中身＆確率設定GUI】", List.of("&7出現アイテムと確率(%)を設定", "", "&eクリックして開く"), true), "open_sg_loot");
+            put(25, item(Material.LODESTONE, "&b&l【コア報酬アイテム設定GUI】", List.of("&7コア破壊時ドロップを設定", "", "&eクリックして開く"), true), "open_sg_core_loot");
         } else {
-            // ★ Randomizer: トーナメントラウンド間インターバル(秒) を追加
             modeNums.addAll(List.of(
                     new Num(prefix + "duration-seconds", "試合時間(秒)", Material.CLOCK, 30, 30, 900, true, 180),
                     new Num(prefix + "break-delay-seconds", "ブロック開放までの待機(秒)", Material.IRON_BARS, 1, 0, 60, true, 0),
@@ -231,12 +245,12 @@ public final class AdminGui implements InventoryHolder {
             if (slot == 17) slot = 19;
             if (slot == 26) slot = 28;
             put(slot++, item(n.icon(), "&e" + n.label(), List.of(
-                    "&7現在: &a" + (n.isInt() ? plugin.getConfig().getInt(n.path(), (int)n.def()) : plugin.getConfig().getDouble(n.path(), n.def())),
+                    "&7現在: &a" + (n.isInt() ? plugin.getConfig().getInt(n.path(), (int) n.def()) : plugin.getConfig().getDouble(n.path(), n.def())),
                     "",
                     "&7左クリック: &f+" + n.step(),
                     "&7右クリック: &f-" + n.step(),
                     "&7Shift: &f×5",
-                    "&d[Qキー(ドロップ)] 初期値(" + (n.isInt() ? (int)n.def() : n.def()) + ")に戻す"
+                    "&d[Qキー(ドロップ)] 初期値(" + (n.isInt() ? (int) n.def() : n.def()) + ")に戻す"
             )), "mnum:" + n.path() + ":" + n.step() + ":" + n.min() + ":" + n.max() + ":" + n.isInt() + ":" + n.def());
         }
 
@@ -279,12 +293,9 @@ public final class AdminGui implements InventoryHolder {
             put(i, display, "sgloot_mod:" + i);
         }
 
-        put(45, item(Material.BOOK, "&f&l初期デフォルト物資にリセット", List.of("&7肉、防具、剣、ダイヤ等の標準設定に戻します")), "sgloot_reset");
+        put(45, item(Material.BOOK, "&f&l初期デフォルト物資にリセット", List.of("&7標準設定に戻します")), "sgloot_reset");
         put(49, item(Material.ARROW, "&fモード設定に戻る", List.of()), "page:MODE_SETTINGS:survivalgames");
-        put(53, item(Material.HOPPER, "&a&l【アイテムの追加方法】", List.of(
-                "&7自分のインベントリにあるアイテムを",
-                "&7クリックすると、新規ドロップ品として登録されます！"
-        )), null);
+        put(53, item(Material.HOPPER, "&a&l【アイテムの追加方法】", List.of("&7インベントリのアイテムをクリックで追加")), null);
     }
 
     private void renderSgCoreLoot() {
@@ -308,12 +319,9 @@ public final class AdminGui implements InventoryHolder {
             put(i, display, "sgcore_mod:" + i);
         }
 
-        put(45, item(Material.BOOK, "&f&l初期ダイヤ装備・剣にリセット", List.of("&7標準のダイヤ装備候補に戻します")), "sgcore_reset");
+        put(45, item(Material.BOOK, "&f&l初期ダイヤ装備・剣にリセット", List.of("&7標準候補に戻します")), "sgcore_reset");
         put(49, item(Material.ARROW, "&fモード設定に戻る", List.of()), "page:MODE_SETTINGS:survivalgames");
-        put(53, item(Material.HOPPER, "&a&l【アイテムの追加方法】", List.of(
-                "&7自分のインベントリにあるアイテムを",
-                "&7クリックすると、コア破壊時の報酬候補に追加されます！"
-        )), null);
+        put(53, item(Material.HOPPER, "&a&l【アイテムの追加方法】", List.of("&7インベントリのアイテムをクリックで追加")), null);
     }
 
     private void renderArenas() {
@@ -334,7 +342,7 @@ public final class AdminGui implements InventoryHolder {
                 lore.add("&b★ 親アリーナ (子: " + a.childIds.size() + "個)");
             }
             lore.add("&7中心: &f" + a.cx + ", " + a.cy + ", " + a.cz);
-            lore.add("&7スポーン数(収容チーム数): &f" + a.spawns.size() + "チーム");
+            lore.add("&7スポーン数: &f" + a.spawns.size() + "チーム");
             lore.add("");
             lore.add("&e左クリック: &fアリーナ設定・子アリーナ管理を開く");
             lore.add("&b右クリック: &fアリーナへテレポート");
@@ -344,27 +352,33 @@ public final class AdminGui implements InventoryHolder {
         }
 
         put(45, item(Material.EMERALD, "&a現在地に通常アリーナ(Randomizer)を新規自動生成", List.of("&7中央台座ビルド付きの標準アリーナ")), "newarena");
-        put(47, item(Material.CHEST, "&6&l【現在地を中心にSGマップ(300×300)を新規作成】", List.of(
-                "&7現在立っている場所を中心とし、300×300の",
-                "&7広大なマップとしてSurvival Gamesアリーナを登録します",
-                "&e足元にエンチャントテーブルを設置し、",
-                "&eその周囲に10チームの円形スポーンを自動生成します！"
-        ), true), "newarena_sg");
+        put(46, item(Material.CHEST, "&6現在地にSGマップ(300×300)を新規作成", List.of("&7中央エンチャントテーブル＋円形スポーン"), true), "newarena_sg");
+        put(47, item(Material.SNOW_BLOCK, "&b&l【現在地にSpleef(5層雪)を新規自動生成】", List.of(
+                "&7現在地を中心に5層(高低差6マス)の円形雪ステージと",
+                "&716個のスポーン地点を一括自動ビルドします"
+        ), true), "newarena_spleef");
 
         put(49, item(Material.ARROW, "&fメインメニューに戻る", List.of()), "page:MAIN");
     }
 
     private void renderArenaSettings() {
-        if (targetId == null) { renderArenas(); return; }
+        if (targetId == null) {
+            renderArenas();
+            return;
+        }
         Arena a = plugin.arenas().get(targetId);
-        if (a == null) { renderArenas(); return; }
+        if (a == null) {
+            renderArenas();
+            return;
+        }
 
         boolean isSG = "survivalgames".equalsIgnoreCase(a.modeId);
+        boolean isSpleef = "spleef".equalsIgnoreCase(a.modeId);
 
         List<String> infoLore = new ArrayList<>();
         infoLore.add("&7ワールド: &f" + a.worldName);
         infoLore.add("&7中心座標: &f" + a.cx + ", " + a.cy + ", " + a.cz);
-        infoLore.add("&7モード: &f" + a.modeId + (isSG ? " &6(300×300 SG仕様)" : ""));
+        infoLore.add("&7モード: &f" + a.modeId);
         infoLore.add("&b★ 適用区分: &e" + a.applicableMode.label);
         if (a.isChild()) {
             infoLore.add("&d★ 子アリーナ (親アリーナ: " + a.parentId + " の設定を同期中)");
@@ -375,7 +389,6 @@ public final class AdminGui implements InventoryHolder {
 
         put(19, item(Material.ENDER_PEARL, "&bアリーナの中心へテレポート", List.of("&7中心座標へワープします")), "atp:" + a.id);
 
-        // ★ アリーナ適用モード切り替えボタン (スロット20)
         String nextModeLabel = switch (a.applicableMode) {
             case BOTH -> "DUO限定";
             case DUO_ONLY -> "TEAM限定";
@@ -397,6 +410,12 @@ public final class AdminGui implements InventoryHolder {
         put(25, item(Material.PLAYER_HEAD, "&e1チームの最大人数: &6" + (a.teamSize == 0 ? "自動(モード準拠)" : a.teamSize + "人"),
                 List.of("&7左クリック: +1人", "&7右クリック: -1人", "&d[Qキー] リセット")), "ateamsize:" + a.id);
 
+        // ★ Spleef用: 雪ブロック生成半径の変更 (アリーナ生成後でも変更可能)
+        if (isSpleef) {
+            put(28, item(Material.SNOWBALL, "&e雪ブロック生成半径: &b" + a.spleefRadius + "マス",
+                    List.of("&7左クリック: +1マス / 右クリック: -1マス", "&7Shift: ×5マス", "&d[Qキー] 24マス(初期値)に戻す")), "aspleef_radius:" + a.id);
+        }
+
         put(29, item(Material.BEACON, "&a現在地にチームスポーンを追加",
                 List.of("&7現在のスポーン数: &e" + a.spawns.size() + "個", "&7立っている位置を次のチームスポーン地点として登録")), "aaddspawn:" + a.id);
 
@@ -407,7 +426,10 @@ public final class AdminGui implements InventoryHolder {
                     List.of("&7親アリーナ &e" + a.id + " &7の設定を完全に同期する", "&7子アリーナを現在地を中心に新規作成します")), "acreate_child:" + a.id);
         }
 
-        if (isSG) {
+        if (isSpleef) {
+            put(33, item(Material.SNOW_BLOCK, "&b&l【現在地を中心にSpleef(5層雪)を再生成】",
+                    List.of("&7設定された半径 (" + a.spleefRadius + "マス) で再ビルドします (編集中)")), "arebuild_spleef:" + a.id);
+        } else if (isSG) {
             put(33, item(Material.ENCHANTING_TABLE, "&6&l【現在地を中心(300×300)に再設定】",
                     List.of("&7現在地を新たな中心座標(エンチャントテーブル)にし、", "&7周囲に10チーム分の円形スポーンを再生成します")), "arecenter_sg:" + a.id);
         } else {
@@ -433,9 +455,15 @@ public final class AdminGui implements InventoryHolder {
     }
 
     private void renderArenaTimingSettings() {
-        if (targetId == null) { renderArenas(); return; }
+        if (targetId == null) {
+            renderArenas();
+            return;
+        }
         Arena a = plugin.arenas().get(targetId);
-        if (a == null) { renderArenas(); return; }
+        if (a == null) {
+            renderArenas();
+            return;
+        }
 
         boolean custom = a.customTimingEnabled;
 
@@ -474,9 +502,9 @@ public final class AdminGui implements InventoryHolder {
         int slot = 11;
         for (Num n : lobbyNums) {
             put(slot++, item(n.icon(), "&e" + n.label(), List.of(
-                    "&7現在: &a" + plugin.getConfig().getInt(n.path(), (int)n.def()), "",
-                    "&7左クリック: &f+" + (int)n.step(), "&7右クリック: &f-" + (int)n.step(), "&7Shift: &f×5",
-                    "&d[Qキー] 初期値(" + (int)n.def() + ")に戻す"
+                    "&7現在: &a" + plugin.getConfig().getInt(n.path(), (int) n.def()), "",
+                    "&7左クリック: &f+" + (int) n.step(), "&7右クリック: &f-" + (int) n.step(), "&7Shift: &f×5",
+                    "&d[Qキー] 初期値(" + (int) n.def() + ")に戻す"
             )), "lnum:" + n.path() + ":" + n.step() + ":" + n.min() + ":" + n.max() + ":" + n.def());
         }
 
@@ -537,8 +565,8 @@ public final class AdminGui implements InventoryHolder {
         int slot = 21;
         for (Num n : ptsNums) {
             put(slot++, item(n.icon(), "&e" + n.label(), List.of(
-                    "&7現在: &a" + plugin.getConfig().getInt(n.path(), (int)n.def()) + " pt", "",
-                    "&7左クリック: &f+" + (int)n.step(), "&7右クリック: &f-" + (int)n.step(), "&7Shift: &f×5",
+                    "&7現在: &a" + plugin.getConfig().getInt(n.path(), (int) n.def()) + " pt", "",
+                    "&7左クリック: &f+" + (int) n.step(), "&7右クリック: &f-" + (int) n.step(), "&7Shift: &f×5",
                     "&d[Qキー] リセット"
             )), "pnum:" + n.path() + ":" + n.step() + ":" + n.min() + ":" + n.max() + ":" + n.def());
         }
@@ -607,6 +635,15 @@ public final class AdminGui implements InventoryHolder {
 
         if (act.equals("open_sg_core_loot")) {
             open(plugin, p, Page.SG_CORE_LOOT, "survivalgames");
+            return;
+        }
+
+        if (act.equals("trigger_spleef_skip")) {
+            Match curM = plugin.match();
+            if (curM != null && curM.mode() instanceof SpleefMode sm) {
+                p.closeInventory();
+                sm.startSkipVote(curM, p.getName());
+            }
             return;
         }
 
@@ -691,7 +728,7 @@ public final class AdminGui implements InventoryHolder {
                     plugin.getConfig().set(path, (int) Math.max(min, Math.min(max, cur + delta)));
                 } else {
                     double cur = plugin.getConfig().getDouble(path, def);
-                    plugin.getConfig().set(path, Math.round(Math.max(min, Math.min(max, cur + delta)) * 10) / 10.0);
+                    plugin.getConfig().set(path, Math.round(Math.max(min, Math.min(max, cur + delta)) * 100) / 100.0);
                 }
             }
             plugin.saveConfig();
@@ -753,7 +790,22 @@ public final class AdminGui implements InventoryHolder {
             return;
         }
 
-        // ★ アリーナ適用モード切り替え (BOTH -> DUO_ONLY -> TEAM_ONLY -> BOTH)
+        // ★ Spleef 雪生成半径の変更 (クリックで±1、Shiftで±5、Qキーでリセット)
+        if (act.startsWith("aspleef_radius:")) {
+            Arena a = plugin.arenas().get(act.substring(15));
+            if (a != null) {
+                if (isDrop) {
+                    a.spleefRadius = 24;
+                } else {
+                    int delta = (shift ? 5 : 1) * (left ? 1 : -1);
+                    a.spleefRadius = Math.max(10, Math.min(50, a.spleefRadius + delta));
+                }
+                plugin.arenas().save();
+                render(p);
+            }
+            return;
+        }
+
         if (act.startsWith("atog_applicable:")) {
             Arena a = plugin.arenas().get(act.substring(16));
             if (a != null) {
@@ -795,7 +847,9 @@ public final class AdminGui implements InventoryHolder {
             if (child != null) {
                 Location l = p.getLocation();
                 child.worldName = l.getWorld().getName();
-                child.cx = l.getBlockX(); child.cy = l.getBlockY(); child.cz = l.getBlockZ();
+                child.cx = l.getBlockX();
+                child.cy = l.getBlockY();
+                child.cz = l.getBlockZ();
                 child.enabled = false;
                 plugin.arenas().save();
                 Msg.send(p, "&a親 &e" + pId + " &aの下位に子アリーナ &b" + childId + " &aを作成しました！");
@@ -915,12 +969,33 @@ public final class AdminGui implements InventoryHolder {
             if (a != null) {
                 Location l = p.getLocation();
                 a.worldName = l.getWorld().getName();
-                a.cx = l.getBlockX(); a.cy = l.getBlockY(); a.cz = l.getBlockZ();
+                a.cx = l.getBlockX();
+                a.cy = l.getBlockY();
+                a.cz = l.getBlockZ();
                 ArenaBuilder.build(a);
                 a.map = null;
                 a.enabled = false;
                 plugin.arenas().save();
                 Msg.send(p, "&a現在地を中心にアリーナマップを再生成しました (編集中)");
+                Sfx.success(p);
+                render(p);
+            }
+            return;
+        }
+
+        if (act.startsWith("arebuild_spleef:")) {
+            Arena a = plugin.arenas().get(act.substring(16));
+            if (a != null) {
+                Location l = p.getLocation();
+                a.worldName = l.getWorld().getName();
+                a.cx = l.getBlockX();
+                a.cy = l.getBlockY();
+                a.cz = l.getBlockZ();
+                ArenaBuilder.buildSpleef(a);
+                a.enabled = false;
+                plugin.arenas().save();
+                plugin.maps().storeSpawns(a);
+                Msg.send(p, "&b現在地を中心にSpleef(5層雪・半径" + a.spleefRadius + "マス)ステージを再生成しました (編集中)");
                 Sfx.success(p);
                 render(p);
             }
@@ -935,7 +1010,6 @@ public final class AdminGui implements InventoryHolder {
                 plugin.arenas().save();
                 plugin.maps().storeSpawns(a);
                 Msg.send(p, "&6&l[Survival Games] &a現在地を300×300マップの中心として再設定しました！");
-                Msg.send(p, "&7足元にエンチャントテーブルを配置し、周囲に10チーム分のスポーンを再生成しました。");
                 Sfx.success(p);
                 render(p);
             }
@@ -1045,7 +1119,9 @@ public final class AdminGui implements InventoryHolder {
                 Arena a = plugin.arenas().create("randomizer" + i, "randomizer");
                 Location l = p.getLocation();
                 a.worldName = l.getWorld().getName();
-                a.cx = l.getBlockX(); a.cy = l.getBlockY(); a.cz = l.getBlockZ();
+                a.cx = l.getBlockX();
+                a.cy = l.getBlockY();
+                a.cz = l.getBlockZ();
                 ArenaBuilder.build(a);
                 a.map = null;
                 a.enabled = false;
@@ -1066,7 +1142,28 @@ public final class AdminGui implements InventoryHolder {
                 plugin.arenas().save();
                 plugin.maps().storeSpawns(a);
                 Msg.send(p, "&6&l[Survival Games] &a新規マップ &e" + aId + " &aを中心地(300×300)として作成しました！");
-                Msg.send(p, "&7足元にエンチャントテーブルを配置し、周囲に10チーム分の円形スポーンを登録しました。");
+                Sfx.success(p);
+                open(plugin, p, Page.ARENA_SETTINGS, aId);
+            }
+            case "newarena_spleef" -> {
+                int i = 1;
+                while (plugin.arenas().get("spleef" + i) != null) i++;
+                String aId = "spleef" + i;
+                Arena a = plugin.arenas().create(aId, "spleef");
+                Location l = p.getLocation();
+                a.worldName = l.getWorld().getName();
+                a.cx = l.getBlockX();
+                a.cy = l.getBlockY();
+                a.cz = l.getBlockZ();
+                a.maxTeams = 16;
+                a.teamSize = 1;
+                a.spleefRadius = 24;
+                ArenaBuilder.buildSpleef(a);
+                a.enabled = false;
+                plugin.arenas().save();
+                plugin.maps().storeSpawns(a);
+                p.teleport(a.center().add(0, 2, 0));
+                Msg.send(p, "&b&l[Spleef] &a新規Spleefアリーナ &e" + aId + " &a(5層雪ステージ・半径24マス)を自動生成しました！");
                 Sfx.success(p);
                 open(plugin, p, Page.ARENA_SETTINGS, aId);
             }

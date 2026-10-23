@@ -16,6 +16,8 @@ import net.gate88.wars.gui.KitPermGui;
 import net.gate88.wars.gui.KitReviewGui;
 import net.gate88.wars.gui.VoteMenu;
 import net.gate88.wars.lobby.HologramManager;
+import net.gate88.wars.match.Match;
+import net.gate88.wars.mode.SpleefMode;
 import net.gate88.wars.mode.WarsMode;
 import net.gate88.wars.points.PointsManager;
 import net.gate88.wars.util.Msg;
@@ -42,8 +44,8 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
     }
 
     private static final List<String> ADMIN_SUBS = List.of("admin", "adomin", "kit", "start", "stop", "setlobby", "sethologram",
-            "setpodium", "arena", "map", "setpoints", "addpoints", "tempop", "reload");
-    private static final List<String> PUBLIC_SUBS = List.of("help", "vote", "top", "points");
+            "setpodium", "arena", "map", "setpoints", "addpoints", "tempop", "reload", "spleef");
+    private static final List<String> PUBLIC_SUBS = List.of("help", "vote", "top", "points", "spleef");
 
     @Override
     public boolean onCommand(CommandSender s, Command cmd, String label, String[] a) {
@@ -63,6 +65,13 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         if (cmdName.equals("kitreview")) {
             if (!(s instanceof Player p)) return true;
             KitReviewGui.open(plugin, p);
+            return true;
+        }
+
+        // ★ /spleef [skip|vote] コマンド直接実行
+        if (cmdName.equals("spleef")) {
+            if (!(s instanceof Player p)) return true;
+            handleSpleefCommand(p, a);
             return true;
         }
 
@@ -122,7 +131,8 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         }
         String sub = a[0].toLowerCase();
         if (ADMIN_SUBS.contains(sub) && !s.hasPermission("wars.admin") && !s.isOp()) {
-            if (!(sub.equals("kit") && a.length > 1 && a[1].equalsIgnoreCase("suggest"))) {
+            if (!(sub.equals("kit") && a.length > 1 && a[1].equalsIgnoreCase("suggest"))
+                    && !(sub.equals("spleef") && a.length > 1 && a[1].equalsIgnoreCase("vote"))) {
                 Msg.send(s, "&c権限がありません");
                 return true;
             }
@@ -141,6 +151,12 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                     return true;
                 }
                 if (s instanceof Player p) VoteMenu.open(plugin, p);
+            }
+            // ★ /wars spleef [skip|vote]
+            case "spleef" -> {
+                if (s instanceof Player p) {
+                    handleSpleefCommand(p, Arrays.copyOfRange(a, 1, a.length));
+                }
             }
             case "top" -> top(s);
             case "points" -> points(s, a);
@@ -176,18 +192,16 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 Msg.send(player, "&aロビー地点を設定しました");
                 Sfx.success(player);
             });
-            // ★ ホログラム個別設置 (/wars sethologram [top|team|stats]) - 変数名を typeLabel に修正
             case "sethologram" -> withPlayer(s, player -> {
                 String typeStr = a.length >= 2 ? a[1].toUpperCase() : "TOP";
-                HologramManager.Type type;
-                try {
-                    type = HologramManager.Type.valueOf(typeStr);
-                } catch (IllegalArgumentException ex) {
-                    type = HologramManager.Type.TOP;
-                }
+                HologramManager.Type holoType = switch (typeStr) {
+                    case "TEAM" -> HologramManager.Type.TEAM;
+                    case "STATS" -> HologramManager.Type.STATS;
+                    default -> HologramManager.Type.TOP;
+                };
                 Location loc = player.getLocation().add(0, 2.5, 0);
-                plugin.holograms().setLocation(type, loc);
-                String typeLabel = switch (type) {
+                plugin.holograms().setLocation(holoType, loc);
+                String typeLabel = switch (holoType) {
                     case TOP -> "累計ポイントTOP10";
                     case TEAM -> "直前チーム順位";
                     case STATS -> "個人成績 (プレイヤー個別表示)";
@@ -242,6 +256,28 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             default -> help(s);
         }
         return true;
+    }
+
+    /** Spleef Skip投票コマンド処理 (/spleef skip / /spleef vote) */
+    private void handleSpleefCommand(Player p, String[] a) {
+        Match m = plugin.match();
+        if (m == null || !(m.mode() instanceof SpleefMode sm)) {
+            Msg.send(p, "&c現在Spleefの試合は行われていません");
+            return;
+        }
+
+        if (a.length == 0 || a[0].equalsIgnoreCase("vote")) {
+            sm.registerSkipVote(m, p);
+            return;
+        }
+
+        if (a[0].equalsIgnoreCase("skip")) {
+            if (!p.isOp() && !p.hasPermission("wars.admin")) {
+                Msg.send(p, "&cSkip投票の発議は運営のみ可能です (/spleef vote で賛成投票)");
+                return;
+            }
+            sm.startSkipVote(m, p.getName());
+        }
     }
 
     private void startWithMode(CommandSender s, String modeName) {
@@ -509,9 +545,11 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
         s.sendMessage(Msg.c("&7/wars vote &f- 投票メニュー"));
         s.sendMessage(Msg.c("&7/wars top &f- 累計ポイントTOP10"));
         s.sendMessage(Msg.c("&7/wars points [name] &f- 累計ポイント"));
+        s.sendMessage(Msg.c("&7/spleef vote &f- Spleef強制終了(Skip)への賛成投票"));
         s.sendMessage(Msg.c("&7/kitsuggest start &f- Kit制作モード開始 (要OPオンライン)"));
         s.sendMessage(Msg.c("&7/kitsuggest <名前> [カテゴリ] &f- Kitの提案"));
         if (s.isOp()) {
+            s.sendMessage(Msg.c("&6[OP] &7/spleef skip &f- Spleef強制終了(Skip)投票の開始"));
             s.sendMessage(Msg.c("&6[OP] &7/tempop <player> &f- ログアウト時に自動剥奪される一時OP付与"));
             s.sendMessage(Msg.c("&6[OP] &7/wars admin &f- 総合管理ダッシュボードGUI"));
             s.sendMessage(Msg.c("&6[OP] &7/wars start [mode] &f- ゲームモードを指定して開始"));
@@ -570,7 +608,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 if (p == null) return;
                 String mode = a.length >= 4 ? a[3] : "randomizer";
                 if (!plugin.modes().hasArenaType(mode)) {
-                    Msg.send(s, "&c不明なアリーナ種類です (randomizer, survivalgames)");
+                    Msg.send(s, "&c不明なアリーナ種類です (randomizer, survivalgames, spleef)");
                     return;
                 }
                 Arena ar = plugin.arenas().create(id, mode.toLowerCase());
@@ -606,7 +644,11 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             case "build" -> {
                 Arena ar = plugin.arenas().get(id);
                 if (ar == null) { Msg.send(s, "&cアリーナが見つかりません"); return; }
-                ArenaBuilder.build(ar);
+                if ("spleef".equalsIgnoreCase(ar.modeId)) {
+                    ArenaBuilder.buildSpleef(ar);
+                } else {
+                    ArenaBuilder.build(ar);
+                }
                 ar.map = null; ar.enabled = false;
                 plugin.arenas().save();
                 Msg.send(s, "&aアリーナを生成しました (スポーン" + ar.spawns.size() + "個)");
@@ -620,7 +662,7 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                 if (!plugin.maps().exists(map)) { Msg.send(s, "&cマップが見つかりません: " + map); return; }
                 Arena ar = plugin.arenas().get(id);
                 String mode = a.length >= 5 ? a[4].toLowerCase() : ar != null ? ar.modeId : "randomizer";
-                if (!plugin.modes().hasArenaType(mode)) { Msg.send(s, "&c不明なアリーナ種類です (randomizer, survivalgames)"); return; }
+                if (!plugin.modes().hasArenaType(mode)) { Msg.send(s, "&c不明なアリーナ種類です (randomizer, survivalgames, spleef)"); return; }
                 if (ar == null) ar = plugin.arenas().create(id, mode);
                 ar.modeId = mode;
                 Location l = p.getLocation();
@@ -756,6 +798,17 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
             return out;
         }
 
+        // ★ /spleef の補完
+        if (cmdName.equals("spleef")) {
+            if (a.length == 1) {
+                out.add("vote");
+                if (s.isOp() || s.hasPermission("wars.admin")) out.add("skip");
+            }
+            String last = a[a.length - 1].toLowerCase();
+            out.removeIf(x -> !x.toLowerCase().startsWith(last));
+            return out;
+        }
+
         if (cmdName.equals("kitsuggest")) {
             if (a.length == 1) {
                 out.add("start");
@@ -794,6 +847,9 @@ public final class WarsCommand implements CommandExecutor, TabCompleter {
                     out.add(m.displayName.replace(" ", ""));
                 }
             }
+        } else if (a.length == 2 && a[0].equalsIgnoreCase("spleef")) {
+            out.add("vote");
+            if (s.hasPermission("wars.admin") || s.isOp()) out.add("skip");
         } else if (a.length == 2 && a[0].equalsIgnoreCase("sethologram")) {
             if (s.hasPermission("wars.admin") || s.isOp()) {
                 out.addAll(List.of("top", "team", "stats"));

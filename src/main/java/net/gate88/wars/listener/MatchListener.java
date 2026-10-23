@@ -4,6 +4,7 @@ import io.papermc.paper.event.player.AsyncChatEvent;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.match.Match;
 import net.gate88.wars.match.MatchPlayer;
+import net.gate88.wars.mode.SpleefMode;
 import net.gate88.wars.mode.SurvivalGamesMode;
 import net.gate88.wars.util.Colors;
 import net.gate88.wars.util.Msg;
@@ -28,6 +29,7 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
@@ -50,6 +52,15 @@ public final class MatchListener implements Listener {
     public void onProjectileLaunch(ProjectileLaunchEvent e) {
         if (e.getEntity() instanceof Trident trident) {
             plugin.trackTrident(trident.getUniqueId());
+        }
+    }
+
+    // ★ Spleef用 雪玉命中処理 (雪ブロック破壊 & プレイヤーKB無効化)
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onProjectileHit(ProjectileHitEvent e) {
+        Match m = plugin.match();
+        if (m != null && m.mode() instanceof SpleefMode sm) {
+            sm.handleSnowballHit(m, e);
         }
     }
 
@@ -131,7 +142,21 @@ public final class MatchListener implements Listener {
         Match m = plugin.match();
         if (m == null || m.isOver()) return;
 
-        // ★ コアエンティティへの攻撃処理
+        // ★ Spleefモードのダメージ制御: プレイヤー間の攻撃・落下ダメージ完全遮断
+        if (m.mode() instanceof SpleefMode) {
+            if (e.getCause() == EntityDamageEvent.DamageCause.FALL) {
+                e.setCancelled(true);
+                return;
+            }
+            if (e instanceof EntityDamageByEntityEvent byEntity) {
+                if (byEntity.getDamager() instanceof Player || (byEntity.getDamager() instanceof Projectile pr && pr.getShooter() instanceof Player)) {
+                    e.setCancelled(true);
+                    return;
+                }
+            }
+        }
+
+        // SG コア攻撃
         if (m.mode() instanceof SurvivalGamesMode sg && sg.isCoreEntity(e.getEntity())) {
             if (e instanceof EntityDamageByEntityEvent byEntity) {
                 Player attacker = null;

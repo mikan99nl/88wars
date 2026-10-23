@@ -1,6 +1,7 @@
 package net.gate88.wars.listener;
 
 import net.gate88.wars.WarsPlugin;
+import net.gate88.wars.arena.Arena;
 import net.gate88.wars.gui.AdminGui;
 import net.gate88.wars.gui.KitGui;
 import net.gate88.wars.gui.KitPermGui;
@@ -32,7 +33,7 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
 
-/** ロビーの保護・参加/退出・ホットバー投票・Kit制作エリア管理 */
+/** ロビーの保護・参加/退出・ホットバー投票・Kit制作エリア管理・アリーナ保護 */
 public final class LobbyListener implements Listener {
     private final WarsPlugin plugin;
 
@@ -86,7 +87,6 @@ public final class LobbyListener implements Listener {
         plugin.clearTrackedTridents();
         e.setRespawnLocation(plugin.lobby().lobbyLocation());
         plugin.getServer().getScheduler().runTask(plugin, () -> {
-            // ★ 修正箇所: plugin 引数を正しく渡す
             if (inLobby(e.getPlayer()) && !plugin.kits().isInKitArea(e.getPlayer().getLocation())) {
                 VoteMenu.giveItems(plugin, e.getPlayer());
             }
@@ -146,10 +146,18 @@ public final class LobbyListener implements Listener {
         }
     }
 
+    // ★ アリーナ保護: 「編集中 (enabled=false)」でない限り、試合外ではOPであっても破壊不可
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent e) {
         Player p = e.getPlayer();
         if (inLobby(p)) {
+            Arena a = plugin.arenas().getArenaAt(e.getBlock().getLocation());
+            if (a != null && a.enabled) {
+                e.setCancelled(true);
+                Msg.actionBar(p, "&cこのアリーナは保護されています (/wars admin で編集中に切り替えてください)");
+                return;
+            }
+
             if (bypass(p)) return;
             e.setCancelled(true);
             if (plugin.kits().isInKitArea(p.getLocation())) {
@@ -158,10 +166,18 @@ public final class LobbyListener implements Listener {
         }
     }
 
+    // ★ アリーナ保護: 「編集中 (enabled=false)」でない限り、試合外ではOPであっても設置不可
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlace(BlockPlaceEvent e) {
         Player p = e.getPlayer();
         if (inLobby(p)) {
+            Arena a = plugin.arenas().getArenaAt(e.getBlockPlaced().getLocation());
+            if (a != null && a.enabled) {
+                e.setCancelled(true);
+                Msg.actionBar(p, "&cこのアリーナは保護されています (/wars admin で編集中に切り替えてください)");
+                return;
+            }
+
             if (bypass(p)) return;
             e.setCancelled(true);
             if (plugin.kits().isInKitArea(p.getLocation())) {
@@ -208,7 +224,6 @@ public final class LobbyListener implements Listener {
         }
     }
 
-    /** 満腹度制御: ロビー内のみ20固定、試合中は槍突進・スプリント・回復で正常に減少 */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onFood(FoodLevelChangeEvent e) {
         if (!(e.getEntity() instanceof Player p)) return;

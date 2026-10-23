@@ -11,7 +11,7 @@ import org.bukkit.Material;
 import org.bukkit.World;
 
 /**
- * アリーナ定義 (親アリーナ・子アリーナ階層構造 / トーナメント適用モード対応)
+ * アリーナ定義 (親アリーナ・子アリーナ階層構造 / トーナメント適用モード / Spleef半径対応)
  */
 public final class Arena {
     public enum ApplicableMode {
@@ -31,14 +31,11 @@ public final class Arena {
     public boolean enabled = true;
     public String map;
 
-    // ★ アリーナ適用モード区分 (両方 / DUO限定 / TEAM限定)
     public ApplicableMode applicableMode = ApplicableMode.BOTH;
 
-    // ★ 親子アリーナ関係 (parentId が null なら親、存在すれば子)
     public String parentId = null;
     public final List<String> childIds = new ArrayList<>();
 
-    // 個別設定
     public int maxTeams = 0;
     public int teamSize = 0;
     public final Set<Material> breakOnStart = new HashSet<>();
@@ -47,6 +44,9 @@ public final class Arena {
     public int customGraceSeconds = 5;
     public int customDurationSeconds = 0;
     public int customBlockDecaySeconds = 0;
+
+    // ★ Spleef用 雪生成半径 (デフォルト 24マス)
+    public int spleefRadius = 24;
 
     public Arena(String id, String modeId) {
         this.id = id;
@@ -68,6 +68,15 @@ public final class Arena {
 
     public boolean isReady() {
         return enabled && world() != null && modeId != null && !spawns.isEmpty();
+    }
+
+    /** 座標がこのアリーナの保護領域内（中心からの直方体・半径以内）にあるかを判定 */
+    public boolean isInside(Location loc) {
+        if (loc.getWorld() == null || worldName == null || !loc.getWorld().getName().equalsIgnoreCase(worldName)) {
+            return false;
+        }
+        int radius = "survivalgames".equalsIgnoreCase(modeId) ? 160 : Math.max(35, spleefRadius + 5);
+        return Math.abs(loc.getBlockX() - cx) <= radius && Math.abs(loc.getBlockZ() - cz) <= radius && Math.abs(loc.getBlockY() - cy) <= 50;
     }
 
     public void setSpawn(int teamIndex, Pos pos) {
@@ -92,7 +101,6 @@ public final class Arena {
         breakOnStart.clear();
     }
 
-    // ★ 設定の引き継ぎ (親アリーナが存在する場合は親の設定を参照・同期)
     public Arena getEffectiveParent(ArenaManager manager) {
         if (isChild() && manager != null) {
             Arena parent = manager.get(parentId);
@@ -101,7 +109,6 @@ public final class Arena {
         return this;
     }
 
-    // ★ スポーン地点の数がそのまま受け入れられるチーム数となる (最大チーム数未指定時は spawns.size())
     public int getEffectiveMaxTeams(ArenaManager manager) {
         Arena eff = getEffectiveParent(manager);
         if (eff.maxTeams > 0) return eff.maxTeams;

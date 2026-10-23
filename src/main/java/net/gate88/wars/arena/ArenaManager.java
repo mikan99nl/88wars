@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.util.Pos;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 
@@ -34,7 +35,6 @@ public final class ArenaManager {
             arena.parentId = a.getString("parentId", null);
             arena.childIds.addAll(a.getStringList("childIds"));
 
-            // ★ 適用モードの読み込み (デフォルト BOTH)
             try {
                 arena.applicableMode = Arena.ApplicableMode.valueOf(a.getString("applicableMode", "BOTH"));
             } catch (Exception ex) {
@@ -48,6 +48,7 @@ public final class ArenaManager {
             arena.customGraceSeconds = a.getInt("customGraceSeconds", 5);
             arena.customDurationSeconds = a.getInt("customDurationSeconds", 0);
             arena.customBlockDecaySeconds = a.getInt("customBlockDecaySeconds", 0);
+            arena.spleefRadius = a.getInt("spleefRadius", 24);
 
             for (String mName : a.getStringList("break-on-start")) {
                 Material m = Material.getMaterial(mName.toUpperCase());
@@ -77,9 +78,7 @@ public final class ArenaManager {
             plugin.data().set(p + "parentId", a.parentId);
             plugin.data().set(p + "childIds", a.childIds);
 
-            // ★ 適用モードの保存
             plugin.data().set(p + "applicableMode", a.applicableMode.name());
-
             plugin.data().set(p + "maxTeams", a.maxTeams);
             plugin.data().set(p + "teamSize", a.teamSize);
             plugin.data().set(p + "customTimingEnabled", a.customTimingEnabled);
@@ -87,6 +86,7 @@ public final class ArenaManager {
             plugin.data().set(p + "customGraceSeconds", a.customGraceSeconds);
             plugin.data().set(p + "customDurationSeconds", a.customDurationSeconds);
             plugin.data().set(p + "customBlockDecaySeconds", a.customBlockDecaySeconds);
+            plugin.data().set(p + "spleefRadius", a.spleefRadius);
 
             List<String> bList = new ArrayList<>();
             for (Material m : a.breakOnStart) bList.add(m.name());
@@ -101,6 +101,15 @@ public final class ArenaManager {
 
     public Arena get(String id) {
         return id == null ? null : arenas.get(id.toLowerCase());
+    }
+
+    /** 座標から該当するアリーナを検索 */
+    public Arena getArenaAt(Location loc) {
+        if (loc == null) return null;
+        for (Arena a : arenas.values()) {
+            if (a.isInside(loc)) return a;
+        }
+        return null;
     }
 
     public Arena create(String id, String modeId) {
@@ -142,7 +151,6 @@ public final class ArenaManager {
         return new ArrayList<>(arenas.values());
     }
 
-    // ★ モード区分（DUO/TEAM/両方）に応じたアリーナ抽出
     public List<Arena> readyFor(String modeId) {
         List<Arena> l = new ArrayList<>();
         for (Arena a : arenas.values()) {
