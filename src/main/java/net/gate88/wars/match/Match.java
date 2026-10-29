@@ -63,6 +63,9 @@ public final class Match {
     private boolean blocksBroken = false;
     private int breakAtElapsed = 0;
 
+    // ★ ラウンド移行中の多重死亡・脱落判定防止フラグ
+    private boolean roundTransitioning = false;
+
     public Match(WarsPlugin plugin, WarsMode mode, Arena arena, List<Player> participants) {
         this.plugin = plugin;
         this.mode = mode;
@@ -115,8 +118,24 @@ public final class Match {
     public BlockTracker blocks() { return blocks; }
     public List<MatchTeam> teams() { return teams; }
     public Collection<MatchPlayer> allPlayers() { return players.values(); }
-    public boolean pvpEnabled() { return state == State.RUNNING; }
+    public boolean pvpEnabled() { return state == State.RUNNING && !roundTransitioning; }
     public boolean isOver() { return state == State.ENDING || state == State.CLOSED; }
+    public boolean isRoundTransitioning() { return roundTransitioning; }
+
+    /** ★ ラウンド待機中ガード: 全員を無敵化し落下やダメージを停止 */
+    public void setRoundTransitioning(boolean transitioning) {
+        this.roundTransitioning = transitioning;
+        if (transitioning) {
+            for (MatchPlayer mp : players.values()) {
+                Player p = mp.player();
+                if (p != null) {
+                    p.setInvulnerable(true);
+                    p.setFallDistance(0f);
+                    p.setFireTicks(0);
+                }
+            }
+        }
+    }
 
     public MatchPlayer participant(Player p) {
         MatchPlayer mp = players.get(p.getUniqueId());
@@ -166,7 +185,40 @@ public final class Match {
             blocksBroken = false;
         }
 
-        // 初期スポーン (トーナメント時はモード側で各ペアアリーナへ配置)
+        teleportAndPrepareAll();
+        mode.onStart(this);
+        updateSidebars();
+
+        syncTeamColors();
+
+        if (ticker != null) ticker.cancel();
+        ticker = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 20L, 20L);
+
+        initBorderTask();
+    }
+
+    /** ★ 次ラウンド専用開始メソッド (初期化ではなくラウンドを進行) */
+    public void startNextRound() {
+        resetForNextRound();
+        int breakDelay = arena.getBreakDelay(mode.breakDelaySeconds(), plugin.arenas());
+        if (breakDelay <= 0) {
+            breakConfiguredArenaBlocks();
+            blocksBroken = true;
+            breakAtElapsed = 0;
+        } else {
+            blocksBroken = false;
+        }
+
+        teleportAndPrepareAll();
+        setRoundTransitioning(false);
+
+        mode.onRoundStart(this);
+        updateSidebars();
+        syncTeamColors();
+    }
+
+    private void teleportAndPrepareAll() {
+        int breakDelay = arena.getBreakDelay(mode.breakDelaySeconds(), plugin.arenas());
         for (MatchTeam t : teams) {
             Pos sp = !arena.spawns.isEmpty()
                     ? arena.spawns.get(t.index % arena.spawns.size())
@@ -194,9 +246,9 @@ public final class Match {
                 Msg.send(p, "あなたの色: " + Colors.code(t.color) + "&l" + Colors.en(t.color));
             }
         }
-        mode.onStart(this);
-        updateSidebars();
+    }
 
+    private void syncTeamColors() {
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             for (MatchTeam t : teams) {
                 for (MatchPlayer mp : t.members) {
@@ -207,10 +259,9 @@ public final class Match {
                 }
             }
         });
+    }
 
-        if (ticker != null) ticker.cancel();
-        ticker = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 20L, 20L);
-
+    private void initBorderTask() {
         boolean hasBorder = border.enabled() || mode.customBorderRadius(this, 0) >= 0;
         if (hasBorder) {
             if (particleTask != null) particleTask.cancel();
@@ -282,6 +333,7 @@ public final class Match {
 
     private void tick() {
         if (isOver()) return;
+        if (roundTransitioning) return; // ★ ラウンド待機中はタイマー・脱落判定を完全スキップ
         elapsed++;
 
         if (state == State.PREPARING) {
@@ -335,9 +387,9 @@ public final class Match {
         }
 
         borderTick();
-        if (isOver()) return;
+        if (isOver() || roundTransitioning) return;
         mode.onSecond(this);
-        if (isOver()) return;
+        if (isOver() || roundTransitioning) return;
 
         if (elapsed >= matchDuration()) {
             MatchTeam winner = mode.pickTimeUpWinner(this);
@@ -379,7 +431,7 @@ public final class Match {
     }
 
     private void drawBorder() {
-        if (isOver()) return;
+        if (isOver() || roundTransitioning) return;
         double half = borderRadius();
         if (half == Double.MAX_VALUE) return;
 
@@ -463,6 +515,7 @@ public final class Match {
     }
 
     public void recordAttack(Player victim, Player attacker) {
+        if (roundTransitioning) return;
         MatchPlayer v = participant(victim);
         MatchPlayer a = participant(attacker);
         if (v == null || a == null || v == a) return;
@@ -473,7 +526,7 @@ public final class Match {
     }
 
     public void eliminate(MatchPlayer victim, MatchPlayer killer, String cause) {
-        if (isOver() || !victim.alive) return;
+        if (isOver() || roundTransitioning || !victim.alive) return;
         if (killer == null && victim.lastAttacker != null
                 && System.currentTimeMillis() - victim.lastAttackMillis <= 8000) {
             killer = participant(victim.lastAttacker);
@@ -576,6 +629,7 @@ public final class Match {
             }
             Msg.title(vp, "&c&l敗退", "&7観戦モードになりました", 0, 40, 10);
         }
+
         mode.onEliminated(this, victim);
         checkEnd();
     }
@@ -590,7 +644,7 @@ public final class Match {
     }
 
     private void checkEnd() {
-        if (isOver()) return;
+        if (isOver() || roundTransitioning) return;
         List<MatchTeam> aliveTeams = new ArrayList<>();
         for (MatchTeam t : teams) if (t.aliveCount() > 0) aliveTeams.add(t);
         if (aliveTeams.size() <= 1) {
@@ -621,6 +675,7 @@ public final class Match {
     public void finish(MatchTeam winner, String reason) {
         if (isOver()) return;
         state = State.ENDING;
+        roundTransitioning = false;
         cancelTasks();
 
         List<Integer> bonus = plugin.getConfig().getIntegerList("points.rank-bonus");
@@ -710,10 +765,12 @@ public final class Match {
         }, 0L, 20L);
     }
 
+    /** ★ 強制中止: 全ラウンド・タスクを即座に破棄して完全終了 */
     public void abort() {
         if (state == State.CLOSED) return;
         aborted = true;
         state = State.ENDING;
+        roundTransitioning = false;
         cancelTasks();
         close(List.of());
     }
@@ -727,6 +784,7 @@ public final class Match {
         if (state == State.CLOSED) return;
         state = State.CLOSED;
         cancelTasks();
+        roundTransitioning = false;
         if (returnTask != null) returnTask.cancel();
         blocks.restoreAll();
         plugin.clearTrackedTridents();

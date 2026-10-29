@@ -29,43 +29,11 @@ public abstract class WarsMode {
         ConfigurationSection s = plugin.getConfig().getConfigurationSection("modes." + id);
         return s != null ? s : plugin.getConfig().createSection("modes." + id);
     }
-    /** アリーナ既存ブロックの破壊可否 (デフォルトは不可) */
-    public boolean canBreak(Match m, MatchPlayer p, Block b) {
-        return false;
-    }
-
-    /** ボーダー半径のカスタム計算 (負の値を返した場合は通常の BorderSpec を使用) */
-    public double customBorderRadius(Match m, int elapsed) {
-        return -1.0;
-    }
-
-    /** 誰かが脱落した際の生存者ボーナスポイント */
-    public int placementBonusPoints() {
-        return 0;
-    }
-
-    /** キル時ポイントの上書き (負の値ならプラグイン共通設定を使用) */
-    public int customKillPoints() {
-        return -1;
-    }
-
-    /** アシスト時ポイントの上書き */
-    public int customAssistPoints() {
-        return 0;
-    }
-
-    /** ラウンド制の管理: 次のラウンドへ移行する場合は true */
-    public boolean handleRoundEnd(Match m, MatchTeam winner) {
-        return false; // 通常モードはそのまま試合終了
-    }
-
 
     public boolean implemented() { return true; }
     public boolean enabled() { return implemented() && cfg().getBoolean("enabled", true); }
     public int durationSeconds() { return cfg().getInt("duration-seconds", 180); }
     public int graceSeconds() { return cfg().getInt("grace-seconds", 5); }
-
-    // ★ 大元設定: 開始から特定ブロック破壊までの秒数 (デフォルト 0秒 = 即座に破壊)
     public int breakDelaySeconds() { return cfg().getInt("break-delay-seconds", 0); }
 
     public int teamSize() { return Math.max(1, cfg().getInt("team-size", 1)); }
@@ -84,9 +52,11 @@ public abstract class WarsMode {
     }
 
     public void onStart(Match m) {}
+    public void onRoundStart(Match m) {} // ★ 次ラウンド開始用フック
     public void onGraceEnd(Match m) {}
     public void onSecond(Match m) {}
     public boolean canPlace(Match m, MatchPlayer p, Block b) { return true; }
+    public boolean canBreak(Match m, MatchPlayer p, Block b) { return false; }
     public boolean decayExempt(Match m, Block b) { return false; }
     public void onBlockPlaced(Match m, MatchPlayer p, Block b) {}
     public void onBlockBroken(Match m, MatchPlayer p, Block b) {}
@@ -95,5 +65,10 @@ public abstract class WarsMode {
     public abstract MatchTeam pickTimeUpWinner(Match m);
     public int standing(Match m, MatchTeam t) { return 0; }
     public List<String> extraSidebar(Match m, MatchPlayer viewer) { return List.of(); }
+    public double customBorderRadius(Match m, int elapsed) { return -1.0; }
+    public int placementBonusPoints() { return 0; }
+    public int customKillPoints() { return -1; }
+    public int customAssistPoints() { return 0; }
+    public boolean handleRoundEnd(Match m, MatchTeam winner) { return false; }
     public void onEnd(Match m) {}
 }

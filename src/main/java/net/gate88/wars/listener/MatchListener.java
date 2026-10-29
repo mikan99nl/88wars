@@ -8,13 +8,12 @@ import net.gate88.wars.mode.SpleefMode;
 import net.gate88.wars.mode.SurvivalGamesMode;
 import net.gate88.wars.util.Colors;
 import net.gate88.wars.util.Msg;
-import net.gate88.wars.util.Sfx;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
-import org.bukkit.entity.Entity;
+import org.bukkit.entity.Entity; // ★ 追加: Entity クラスのインポート
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.entity.Trident;
@@ -35,6 +34,7 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
 
 public final class MatchListener implements Listener {
     private final WarsPlugin plugin;
@@ -55,12 +55,22 @@ public final class MatchListener implements Listener {
         }
     }
 
-    // ★ Spleef用 雪玉命中処理 (雪ブロック破壊 & プレイヤーKB無効化)
     @EventHandler(priority = EventPriority.HIGH)
     public void onProjectileHit(ProjectileHitEvent e) {
         Match m = plugin.match();
         if (m != null && m.mode() instanceof SpleefMode sm) {
             sm.handleSnowballHit(m, e);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerMove(PlayerMoveEvent e) {
+        if (e.getFrom().getY() == e.getTo().getY() && e.getFrom().getBlockX() == e.getTo().getBlockX() && e.getFrom().getBlockZ() == e.getTo().getBlockZ()) {
+            return;
+        }
+        Match m = plugin.match();
+        if (m != null && m.mode() instanceof SpleefMode sm) {
+            sm.handlePlayerMove(m, e.getPlayer(), e.getFrom(), e.getTo());
         }
     }
 
@@ -142,7 +152,6 @@ public final class MatchListener implements Listener {
         Match m = plugin.match();
         if (m == null || m.isOver()) return;
 
-        // ★ Spleefモードのダメージ制御: プレイヤー間の攻撃・落下ダメージ完全遮断
         if (m.mode() instanceof SpleefMode) {
             if (e.getCause() == EntityDamageEvent.DamageCause.FALL) {
                 e.setCancelled(true);
@@ -156,7 +165,6 @@ public final class MatchListener implements Listener {
             }
         }
 
-        // SG コア攻撃
         if (m.mode() instanceof SurvivalGamesMode sg && sg.isCoreEntity(e.getEntity())) {
             if (e instanceof EntityDamageByEntityEvent byEntity) {
                 Player attacker = null;
@@ -200,7 +208,6 @@ public final class MatchListener implements Listener {
                 if (!m.pvpEnabled()) {
                     e.setCancelled(true);
                     Msg.actionBar(ap, "&cまだPvPはできません");
-                    Sfx.deny(ap);
                     return;
                 }
                 if (attacker != v) m.recordAttack(victim, ap);

@@ -1,6 +1,7 @@
 package net.gate88.wars.mode;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import net.gate88.wars.WarsPlugin;
 import net.gate88.wars.arena.Arena;
 import net.gate88.wars.match.Match;
@@ -25,13 +26,50 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.scheduler.BukkitTask;
 
 public final class SpleefMode extends WarsMode {
+    // ------------------------------------------------------------ 内部データ構造
+    private record BrokenBlockEntry(UUID breaker, long timestamp) {}
+
+    private static final class FallTag {
+        final UUID dropper;
+        final long droppedTime;
+        boolean landed;
+        long landedTime;
+
+        FallTag(UUID dropper, long droppedTime) {
+            this.dropper = dropper;
+            this.droppedTime = droppedTime;
+            this.landed = false;
+            this.landedTime = 0;
+        }
+
+        boolean isValid(long now) {
+            if (!landed) return true; // 落下中は有効
+            return now - landedTime <= 5000; // 接地後5秒以内は有効
+        }
+    }
+
+    private static record BlockKey(int x, int y, int z) {
+        static BlockKey of(Block b) { return new BlockKey(b.getX(), b.getY(), b.getZ()); }
+        static BlockKey of(Location l) { return new BlockKey(l.getBlockX(), l.getBlockY(), l.getBlockZ()); }
+    }
+
+    // ------------------------------------------------------------ フィールド
     private int currentRound = 1;
     private final Map<UUID, Integer> roundWins = new HashMap<>();
     private final Map<UUID, Integer> roundMined = new HashMap<>();
 
+    // 提案②: キル・アシスト統計
+    private final Map<UUID, Integer> totalKills = new HashMap<>();
+    private final Map<UUID, Integer> totalAssists = new HashMap<>();
+
+    // キル・アシスト追跡キャッシュ
+    private final Map<BlockKey, BrokenBlockEntry> brokenBlocks = new ConcurrentHashMap<>();
+    private final Map<UUID, Deque<FallTag>> victimTags = new HashMap<>();
+
     private boolean skipVotingActive = false;
     private final Set<UUID> skipVoters = new HashSet<>();
-    private BukkitTask nextRoundTask = null; // ★ 次ラウンド待機タスクの追跡
+    private BukkitTask nextRoundTask = null;
+    private boolean roundTransitioning = false;
 
     public SpleefMode(WarsPlugin plugin, String id, String displayName, Material icon, List<String> description) {
         super(plugin, id, displayName, icon, description);
@@ -42,6 +80,7 @@ public final class SpleefMode extends WarsMode {
         return "spleef";
     }
 
+    // ------------------------------------------------------------ 設定アクセサ
     public int upgradeMineCount() { return cfg().getInt("upgrade-mine-count", 20); }
     public int snowballMineCount() { return cfg().getInt("snowball-mine-count", 25); }
     public double borderStartRadius() { return cfg().getDouble("border.start-radius", 30.0); }
@@ -51,6 +90,9 @@ public final class SpleefMode extends WarsMode {
     public int hardLimitSeconds() { return cfg().getInt("hard-limit-seconds", 300); }
     public int skipMinVotes() { return cfg().getInt("skip.min-votes", 3); }
     public int skipPercent() { return cfg().getInt("skip.percent", 50); }
+
+    // ★ 提案④: 終盤サドンデス設定 (初期値 HARD_LIMIT)
+    public String suddenDeathMode() { return cfg().getString("sudden-death-mode", "HARD_LIMIT"); }
 
     @Override
     public int teamSize() { return 1; }
@@ -72,16 +114,28 @@ public final class SpleefMode extends WarsMode {
         return endRadius;
     }
 
+    // ------------------------------------------------------------ ライフサイクル
     @Override
     public void onStart(Match m) {
-        // ★ 初回以外にRound 3から始まる問題を根本修正: 試合の新規開始時は確実にRound 1へリセット
-        if (nextRoundTask == null) {
-            currentRound = 1;
-            roundWins.clear();
-        }
-
         cancelNextRoundTask();
+        currentRound = 1;
+        roundWins.clear();
+        totalKills.clear();
+        totalAssists.clear();
+        startRoundCommon(m);
+    }
+
+    @Override
+    public void onRoundStart(Match m) {
+        startRoundCommon(m);
+    }
+
+    private void startRoundCommon(Match m) {
+        cancelNextRoundTask();
+        roundTransitioning = false;
         roundMined.clear();
+        brokenBlocks.clear();
+        victimTags.clear();
         skipVotingActive = false;
         skipVoters.clear();
 
@@ -113,31 +167,67 @@ public final class SpleefMode extends WarsMode {
 
     @Override
     public void onSecond(Match m) {
+        if (roundTransitioning) return;
+
         int elapsed = m.elapsed();
         Arena a = m.arena();
+        long now = System.currentTimeMillis();
 
-        // cy - 40 落下脱落判定
+        // 1. 15秒経過した古いブロック破壊情報の自動消去
+        brokenBlocks.entrySet().removeIf(entry -> now - entry.getValue().timestamp() > 15000);
+
+        // 2. 最下層からの落下脱落判定 (cy - 40 以下)
         double fallThresholdY = a.cy - 40.0;
         for (MatchPlayer mp : new ArrayList<>(m.allPlayers())) {
             if (!mp.alive || mp.left) continue;
             Player p = mp.player();
             if (p != null && p.getLocation().getY() <= fallThresholdY) {
-                m.eliminate(mp, null, "最下層より落下");
+                handleSpleefFallDeath(m, mp);
             }
         }
 
+        // 3. 自動Skip投票チェック
         int autoSkipTime = autoSkipSeconds();
         if (autoSkipTime > 0 && !skipVotingActive && elapsed >= autoSkipTime) {
             startSkipVote(m, "膠着防止 (自動発動)");
         }
 
+        // 4. ハードリミット (強制終了) / サドンデス崩壊
         int hardLimit = hardLimitSeconds();
         if (hardLimit > 0 && elapsed >= hardLimit) {
-            m.broadcastToMatch("&c&l【時間切れ】 &e制限時間に達したためラウンドを強制終了します！");
-            triggerSkipSuccess(m);
+            if ("DECAY".equalsIgnoreCase(suddenDeathMode())) {
+                // サドンデス崩壊モード: 最下層 (cy - 24) の雪を外周から崩壊
+                decayLowestLayer(m, a, elapsed - hardLimit);
+            } else {
+                // 初期設定: 確定強制終了
+                m.broadcastToMatch("&c&l【時間切れ】 &e制限時間に達したためラウンドを強制終了します！");
+                triggerSkipSuccess(m);
+            }
         }
     }
 
+    private void decayLowestLayer(Match m, Arena a, int decaySeconds) {
+        int lowestY = a.cy - 24;
+        World w = m.world();
+        int r = (a.spleefRadius > 0) ? a.spleefRadius : 24;
+        int shrinkR = Math.max(2, r - (decaySeconds / 3));
+
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dz = -r; dz <= r; dz++) {
+                int distSq = dx * dx + dz * dz;
+                if (distSq > shrinkR * shrinkR && distSq <= r * r) {
+                    Block b = w.getBlockAt(a.cx + dx, lowestY, a.cz + dz);
+                    if (b.getType() == Material.SNOW_BLOCK) {
+                        m.blocks().trackBreak(b);
+                        b.setType(Material.AIR, false);
+                        w.spawnParticle(Particle.BLOCK, b.getLocation().add(0.5, 0.5, 0.5), 4, 0.2, 0.2, 0.2, Material.SNOW_BLOCK.createBlockData());
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ 採掘 & 破壊ブロック15秒記録
     @Override
     public boolean canBreak(Match m, MatchPlayer p, Block b) {
         return b.getType() == Material.SNOW_BLOCK;
@@ -150,9 +240,12 @@ public final class SpleefMode extends WarsMode {
 
     @Override
     public void onBlockBroken(Match m, MatchPlayer p, Block b) {
-        if (b.getType() != Material.SNOW_BLOCK) return;
+        if (b.getType() != Material.SNOW_BLOCK || roundTransitioning) return;
         Player pl = p.player();
         if (pl == null) return;
+
+        // ★ ブロック破壊位置と破壊者を記録 (15秒間有効)
+        brokenBlocks.put(BlockKey.of(b), new BrokenBlockEntry(p.uuid, System.currentTimeMillis()));
 
         int count = roundMined.merge(p.uuid, 1, Integer::sum);
 
@@ -196,19 +289,29 @@ public final class SpleefMode extends WarsMode {
         Msg.title(p, "&b&lスコップ進化！", "&e効率V ダイヤスコップに昇格", 5, 40, 10);
     }
 
+    // ------------------------------------------------------------ 雪玉による破壊 & ヒット演出
     public void handleSnowballHit(Match m, ProjectileHitEvent e) {
-        if (!(e.getEntity() instanceof Snowball)) return;
+        if (!(e.getEntity() instanceof Snowball sb) || roundTransitioning) return;
 
+        UUID shooterUuid = sb.getShooter() instanceof Player sp ? sp.getUniqueId() : null;
+
+        // 対ブロック: 雪玉による破壊もキル判定に記録
         if (e.getHitBlock() != null) {
             Block b = e.getHitBlock();
             if (b.getType() == Material.SNOW_BLOCK) {
                 m.blocks().trackBreak(b);
                 b.setType(Material.AIR, false);
+
+                if (shooterUuid != null) {
+                    brokenBlocks.put(BlockKey.of(b), new BrokenBlockEntry(shooterUuid, System.currentTimeMillis()));
+                }
+
                 b.getWorld().spawnParticle(Particle.BLOCK, b.getLocation().add(0.5, 0.5, 0.5), 10, 0.2, 0.2, 0.2, Material.SNOW_BLOCK.createBlockData());
                 b.getWorld().playSound(b.getLocation(), Sound.BLOCK_SNOW_BREAK, 1.0f, 1.0f);
             }
         }
 
+        // 対プレイヤー: KB完全無効
         if (e.getHitEntity() instanceof Player hitPlayer) {
             hitPlayer.playHurtAnimation(0f);
             hitPlayer.playSound(hitPlayer.getLocation(), Sound.ENTITY_PLAYER_HURT, 1.0f, 1.2f);
@@ -216,8 +319,154 @@ public final class SpleefMode extends WarsMode {
         }
     }
 
+    // ------------------------------------------------------------ プレイヤー移動監視・穴通過 ＆ 接地判定
+    public void handlePlayerMove(Match m, Player p, Location from, Location to) {
+        if (roundTransitioning) return;
+        MatchPlayer mp = m.participant(p);
+        if (mp == null || !mp.alive) return;
+
+        long now = System.currentTimeMillis();
+
+        // 1. 穴の通過検知 (直近15秒以内に掘られたブロックの空間を通過したか)
+        BlockKey[] checkKeys = new BlockKey[]{
+                BlockKey.of(to),
+                BlockKey.of(to.clone().subtract(0, 0.5, 0)),
+                BlockKey.of(from)
+        };
+
+        for (BlockKey bk : checkKeys) {
+            BrokenBlockEntry entry = brokenBlocks.get(bk);
+            if (entry != null && (now - entry.timestamp() <= 15000)) {
+                Deque<FallTag> tags = victimTags.computeIfAbsent(p.getUniqueId(), k -> new ArrayDeque<>());
+                // 直近のタグと同一破壊者でなければ新しいタグを追加
+                if (tags.isEmpty() || !tags.peekFirst().dropper.equals(entry.breaker())) {
+                    tags.addFirst(new FallTag(entry.breaker(), now));
+                    if (tags.size() > 5) tags.removeLast();
+                }
+                break;
+            }
+        }
+
+        // 2. 雪ブロックへの接地検知 (着地から5秒間持続)
+        if (to.getY() <= from.getY()) {
+            Block below = to.clone().subtract(0, 0.2, 0).getBlock();
+            if (below.getType() == Material.SNOW_BLOCK) {
+                Deque<FallTag> tags = victimTags.get(p.getUniqueId());
+                if (tags != null && !tags.isEmpty()) {
+                    FallTag latest = tags.peekFirst();
+                    if (!latest.landed) {
+                        latest.landed = true;
+                        latest.landedTime = now;
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ キル・アシスト判定 ＆ 自滅格上げ処理
+    private void handleSpleefFallDeath(Match m, MatchPlayer victim) {
+        long now = System.currentTimeMillis();
+        Deque<FallTag> tags = victimTags.get(victim.uuid);
+
+        UUID killerUuid = null;
+        UUID assisterUuid = null;
+
+        if (tags != null && !tags.isEmpty()) {
+            // 有効期限内 (落下中、または接地後5秒以内) のタグを順に走査
+            List<FallTag> validTags = new ArrayList<>();
+            for (FallTag tag : tags) {
+                if (tag.isValid(now)) {
+                    validTags.add(tag);
+                }
+            }
+
+            if (!validTags.isEmpty()) {
+                FallTag primaryTag = validTags.get(0);
+
+                // ★ 自滅格上げルール:
+                // 直前の穴が自分自身によって掘られたものであっても、
+                // 接地後5秒以内の他プレイヤーによるタグが付いていれば、他プレイヤーをKillerに格上げ
+                if (primaryTag.dropper.equals(victim.uuid)) {
+                    for (int i = 1; i < validTags.size(); i++) {
+                        FallTag t = validTags.get(i);
+                        if (!t.dropper.equals(victim.uuid)) {
+                            killerUuid = t.dropper;
+                            // さらに前のタグがあればアシスト
+                            for (int j = i + 1; j < validTags.size(); j++) {
+                                FallTag aTag = validTags.get(j);
+                                if (!aTag.dropper.equals(victim.uuid) && !aTag.dropper.equals(killerUuid)) {
+                                    assisterUuid = aTag.dropper;
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                } else {
+                    killerUuid = primaryTag.dropper;
+                    for (int i = 1; i < validTags.size(); i++) {
+                        FallTag aTag = validTags.get(i);
+                        if (!aTag.dropper.equals(victim.uuid) && !aTag.dropper.equals(killerUuid)) {
+                            assisterUuid = aTag.dropper;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        victimTags.remove(victim.uuid);
+
+        MatchPlayer killer = (killerUuid != null) ? m.participant(killerUuid) : null;
+        MatchPlayer assister = (assisterUuid != null) ? m.participant(assisterUuid) : null;
+
+        // ★ ランダマイザー完全準拠のキル・アシスト演出
+        if (killer != null && killer != victim) {
+            executeKillAssistEffects(m, victim, killer, assister);
+        } else {
+            // ★ 提案③: 純粋な自滅のアナウンス区別
+            m.broadcastToMatch(Colors.code(victim.team.color) + "&l" + Colors.en(victim.team.color) + " &f" + victim.name + " &7は足元を踏み抜いて脱落した");
+        }
+
+        m.eliminate(victim, killer, killer != null ? "Spleefキル" : "足元踏み抜き");
+    }
+
+    private void executeKillAssistEffects(Match m, MatchPlayer victim, MatchPlayer killer, MatchPlayer assister) {
+        World w = m.world();
+        Player vp = victim.player();
+        Player kp = killer.player();
+
+        // 統計加算
+        killer.kills++;
+        totalKills.merge(killer.uuid, 1, Integer::sum);
+
+        // キル演出: 落雷 & 水色サブタイトル [⚔]
+        if (vp != null) {
+            w.strikeLightningEffect(vp.getLocation());
+        }
+        if (kp != null && kp.isOnline()) {
+            kp.playSound(kp.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.2f);
+            Msg.title(kp, "", "&b[⚔] " + victim.name, 0, 25, 5);
+        }
+
+        // アシスト演出
+        if (assister != null && assister != killer && assister != victim) {
+            totalAssists.merge(assister.uuid, 1, Integer::sum);
+            Player ap = assister.player();
+            if (ap != null && ap.isOnline()) {
+                Msg.title(ap, "", "&b[⚔] " + victim.name, 0, 25, 5);
+                Msg.actionBar(ap, "&b⚔ ASSIST ON " + victim.name);
+                ap.playSound(ap.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.4f);
+            }
+        }
+
+        m.broadcastToMatch(Colors.code(victim.team.color) + "&l" + Colors.en(victim.team.color) + " &f" + victim.name
+                + " &7は " + Colors.code(killer.team.color) + "&l" + Colors.en(killer.team.color) + " &f" + killer.name + " &7に落とされた");
+    }
+
+    // ------------------------------------------------------------ Skip 投票
     public void startSkipVote(Match m, String initiatedBy) {
-        if (skipVotingActive) return;
+        if (skipVotingActive || roundTransitioning) return;
         skipVotingActive = true;
         skipVoters.clear();
 
@@ -238,7 +487,7 @@ public final class SpleefMode extends WarsMode {
     }
 
     public void registerSkipVote(Match m, Player p) {
-        if (!skipVotingActive) {
+        if (!skipVotingActive || roundTransitioning) {
             Msg.send(p, "&c現在Skip投票は行われていません");
             return;
         }
@@ -265,6 +514,7 @@ public final class SpleefMode extends WarsMode {
     }
 
     private void triggerSkipSuccess(Match m) {
+        if (roundTransitioning) return;
         skipVotingActive = false;
         for (MatchPlayer mp : m.allPlayers()) {
             if (mp.alive) {
@@ -276,7 +526,9 @@ public final class SpleefMode extends WarsMode {
 
     @Override
     public void onEliminated(Match m, MatchPlayer victim) {
-        if (m.aliveCount() <= 1 && !skipVotingActive) {
+        if (roundTransitioning || skipVotingActive) return;
+
+        if (m.aliveCount() <= 1) {
             MatchPlayer roundWinner = null;
             for (MatchPlayer mp : m.allPlayers()) {
                 if (mp.alive) {
@@ -293,6 +545,10 @@ public final class SpleefMode extends WarsMode {
     }
 
     private void progressRound(Match m, MatchPlayer roundWinner) {
+        if (roundTransitioning) return;
+        roundTransitioning = true;
+        m.setRoundTransitioning(true);
+
         m.blocks().restoreAll();
         cancelNextRoundTask();
 
@@ -302,8 +558,8 @@ public final class SpleefMode extends WarsMode {
 
             nextRoundTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
                 nextRoundTask = null;
-                m.resetForNextRound();
-                m.start();
+                roundTransitioning = false;
+                m.startNextRound();
             }, 200L);
         } else {
             finishTournament(m);
@@ -312,6 +568,7 @@ public final class SpleefMode extends WarsMode {
 
     private void finishTournament(Match m) {
         cancelNextRoundTask();
+        roundTransitioning = false;
 
         int maxWins = 0;
         for (int w : roundWins.values()) {
@@ -341,11 +598,19 @@ public final class SpleefMode extends WarsMode {
             }
         }
 
-        sb.append("\n&6&l--- 勝利数一覧 ---\n");
+        // ★ 提案②: 勝利数・キル数・アシスト数を並列表示
+        sb.append("\n&6&l--- 個人成績一覧 ---\n");
         List<MatchPlayer> all = new ArrayList<>(m.allPlayers());
-        all.sort((a, b) -> Integer.compare(roundWins.getOrDefault(b.uuid, 0), roundWins.getOrDefault(a.uuid, 0)));
+        all.sort((a, b) -> {
+            int wCmp = Integer.compare(roundWins.getOrDefault(b.uuid, 0), roundWins.getOrDefault(a.uuid, 0));
+            if (wCmp != 0) return wCmp;
+            return Integer.compare(totalKills.getOrDefault(b.uuid, 0), totalKills.getOrDefault(a.uuid, 0));
+        });
+
         for (MatchPlayer mp : all) {
-            sb.append("&f").append(mp.name).append(" &8- &e").append(roundWins.getOrDefault(mp.uuid, 0)).append("勝\n");
+            sb.append("&f").append(mp.name).append(" &8- &e").append(roundWins.getOrDefault(mp.uuid, 0)).append("勝")
+                    .append(" &7(キル: &a").append(totalKills.getOrDefault(mp.uuid, 0))
+                    .append("&7, アシスト: &b").append(totalAssists.getOrDefault(mp.uuid, 0)).append("&7)\n");
         }
         sb.append("&6&l==============================");
 
@@ -353,7 +618,7 @@ public final class SpleefMode extends WarsMode {
             Bukkit.broadcast(Msg.c(line));
         }
 
-        currentRound = 1; // リセット
+        currentRound = 1;
         MatchTeam champTeam = !champions.isEmpty() ? champions.get(0).team : null;
         m.finish(champTeam, champions.size() > 1 ? "Spleef同率優勝" : "Spleef総合優勝");
     }
@@ -365,13 +630,17 @@ public final class SpleefMode extends WarsMode {
         }
     }
 
-    // ★ 中止・強制終了時に次ラウンドタスクを破棄し、Round 1へ完全初期化
     @Override
     public void onEnd(Match m) {
         cancelNextRoundTask();
+        roundTransitioning = false;
         currentRound = 1;
         roundWins.clear();
         roundMined.clear();
+        brokenBlocks.clear();
+        victimTags.clear();
+        totalKills.clear();
+        totalAssists.clear();
         skipVotingActive = false;
         skipVoters.clear();
     }
@@ -386,13 +655,18 @@ public final class SpleefMode extends WarsMode {
         return null;
     }
 
+    // ★ 提案②: サイドバーにキル/アシスト数を追加表示
     @Override
     public List<String> extraSidebar(Match m, MatchPlayer viewer) {
         int wins = roundWins.getOrDefault(viewer.uuid, 0);
         int mined = roundMined.getOrDefault(viewer.uuid, 0);
+        int k = totalKills.getOrDefault(viewer.uuid, 0);
+        int a = totalAssists.getOrDefault(viewer.uuid, 0);
+
         return List.of(
                 "&fラウンド: &6" + currentRound + "&7/3",
                 "&f勝利数: &e" + wins + "勝",
+                "&fキル/アシスト: &a" + k + " &7/ &b" + a,
                 "&f雪採掘数: &b" + mined + "個",
                 skipVotingActive ? "&aSkip投票中 &7(/spleef vote)" : "&f生存者: &a" + m.aliveCount() + "人"
         );

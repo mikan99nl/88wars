@@ -197,6 +197,8 @@ public final class AdminGui implements InventoryHolder {
             modeNums.add(new Num(prefix + "skip.percent", "Skip必要賛成割合(%)", Material.PAPER, 5, 10, 100, true, 50));
 
             modeToggles.add(new Toggle(prefix + "enabled", "モード有効化", Material.REPEATER, new String[]{"true", "false"}, "true"));
+            // ★ 提案④: サドンデス方式の切り替えトグル (初期値 HARD_LIMIT)
+            modeToggles.add(new Toggle(prefix + "sudden-death-mode", "サドンデス方式 (最大時間到達時)", Material.FIREWORK_STAR, new String[]{"HARD_LIMIT", "DECAY"}, "HARD_LIMIT"));
 
             Match curM = plugin.match();
             if (curM != null && curM.mode() instanceof SpleefMode) {
@@ -258,7 +260,7 @@ public final class AdminGui implements InventoryHolder {
         for (Toggle t : modeToggles) {
             String val = plugin.getConfig().getString(t.path(), t.def());
             put(slot++, item(t.icon(), "&b" + t.label(), List.of(
-                    "&7現在: " + (val.equalsIgnoreCase("true") ? "&a有効 (true)" : "&c無効 (false)"),
+                    "&7現在: " + (val.equalsIgnoreCase("true") ? "&a有効 (true)" : val.equalsIgnoreCase("false") ? "&c無効 (false)" : "&e" + val),
                     "",
                     "&7クリックで切り替え",
                     "&d[Qキー(ドロップ)] 初期値(" + t.def() + ")に戻す"
@@ -410,7 +412,6 @@ public final class AdminGui implements InventoryHolder {
         put(25, item(Material.PLAYER_HEAD, "&e1チームの最大人数: &6" + (a.teamSize == 0 ? "自動(モード準拠)" : a.teamSize + "人"),
                 List.of("&7左クリック: +1人", "&7右クリック: -1人", "&d[Qキー] リセット")), "ateamsize:" + a.id);
 
-        // ★ Spleef用: 雪ブロック生成半径の変更 (アリーナ生成後でも変更可能)
         if (isSpleef) {
             put(28, item(Material.SNOWBALL, "&e雪ブロック生成半径: &b" + a.spleefRadius + "マス",
                     List.of("&7左クリック: +1マス / 右クリック: -1マス", "&7Shift: ×5マス", "&d[Qキー] 24マス(初期値)に戻す")), "aspleef_radius:" + a.id);
@@ -755,6 +756,9 @@ public final class AdminGui implements InventoryHolder {
                     plugin.getConfig().set(path, cur.equalsIgnoreCase("VOTE") ? "RANDOM" : "VOTE");
                 } else if (path.equals("podium.type")) {
                     plugin.getConfig().set(path, cur.equalsIgnoreCase("MANNEQUIN") ? "ARMOR_STAND" : "MANNEQUIN");
+                } else if (path.endsWith("sudden-death-mode")) {
+                    // ★ 提案④: HARD_LIMIT / DECAY 切り替え
+                    plugin.getConfig().set(path, cur.equalsIgnoreCase("HARD_LIMIT") ? "DECAY" : "HARD_LIMIT");
                 }
             }
             plugin.saveConfig();
@@ -790,7 +794,6 @@ public final class AdminGui implements InventoryHolder {
             return;
         }
 
-        // ★ Spleef 雪生成半径の変更 (クリックで±1、Shiftで±5、Qキーでリセット)
         if (act.startsWith("aspleef_radius:")) {
             Arena a = plugin.arenas().get(act.substring(15));
             if (a != null) {
